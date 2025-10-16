@@ -1,0 +1,67 @@
+# -------------------------
+# Python Cache / Build Files
+# -------------------------
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pdb
+*.egg*
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# -------------------------
+# Virtual Environment (venv)
+# -------------------------
+venv/
+env/
+ENV/
+.venv/
+.python-version
+
+# -------------------------
+# IDE / Editor Settings
+# -------------------------
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# -------------------------
+# OS Generated Files
+# -------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# -------------------------
+# Logs / Saves / Temp
+# -------------------------
+*.log
+*.tmp
+*.swp
+*.bak
+
+# -------------------------
+# Project Output (Downloads / Cache)
+# -------------------------
+output/
+output_org_pdfs/
+downloads/
+cache/
+
+# -------------------------
+# Environment Configs / Secrets
+# -------------------------
+.env
+.env.local
+*.secret
+*.key
+
+# -------------------------
+# Jupyter / IPython
+# -------------------------
+.ipynb_checkpoints/
+*.ipynb
