@@ -1,47 +1,44 @@
-# 🎓 ArXiv Daily Institution Paper Collector
+# 🎓 ArXiv Daily Institutional Paper Collector
 
-> Automatically collect the latest Computer Science papers from arXiv, filter by date, classify by research institutions (Google, OpenAI, MIT, etc.), and download full PDFs into folders by **date → organization**.
+> Automated daily downloader for arXiv **Computer Science** papers.  
+> Filters by **Beijing time**, extracts **real affiliations from PDF (author/institution block)**, and organizes papers by **top research organizations & universities** (Google, MIT, OpenAI, Tsinghua, etc.).
 
 ---
 
-## 🔍 Key Features
+## 📌 Core Features
 
-✅ Fetches **latest arXiv CS papers** (auto pagination)  
-✅ Filters by **Beijing local date** (Published / Updated mode selectable)  
-✅ Classifies papers by **institutions / universities / labs**  
-✅ Downloads **full original PDFs** (no merge required)  
-✅ Folder structure:
+| Feature | Description |
+|---------|-------------|
+| 🕒 Daily Schedule | Filters papers by **yesterday (Beijing time)** |
+| 🏛 Real Affiliation Detection | Extracts **institution info from PDF** (not from title/abstract!) |
+| 🎯 Organization Classification | Supports **Big Tech, Universities, Chinese AI Labs, Research Institutes** |
+| 📂 Auto Folder Structure | `output_org_pdfs/YYYY-MM-DD/<ORG>/paper.pdf` |
+| 🧠 Smart Fallback | Uses institution-specific API search when baseline misses papers |
+| 💾 Caching | Avoids redownloading PDFs (uses `cache_pdfs/`) |
+
+---
+
+## 🗂 Folder Structure
 
 ```
 
-output_org_pdfs/
-└── YYYY-MM-DD/
+DailyPaper/
+├── app.py
+├── config.py
+├── fetch_arxiv.py
+├── filters.py
+├── classify.py
+├── pdf_affil.py            # (NEW) PDF author/institution extraction
+├── prefetch.py             # (NEW) Unified PDF caching
+├── affil_classify.py       # (NEW) Final classification via PDF block
+├── utils.py
+├── requirements.txt
+└── output_org_pdfs/
+└── 2025-10-16/
 ├── Google/
 ├── OpenAI/
 ├── MIT/
 └── ...
-
-```
-
-✅ Supports **fallback per-organization search** to ensure maximum coverage  
-✅ Easily expandable to new organizations (Microsoft, Tsinghua, Berkeley, etc.)
-
----
-
-## 🗂 Project Structure
-
-```
-
-arxiv_daily_org_pdfs/
-├─ app.py                # Main entry – fetch, filter, classify, download
-├─ config.py             # Settings: timezone, org regex, paging, window mode
-├─ fetch_arxiv.py        # arXiv API caller with retry & fallback endpoints
-├─ filters.py            # Time-window filtering (published/updated)
-├─ classify.py           # Regex-based institution grouping
-├─ downloader.py         # Concurrent PDF downloader (with ID fix)
-├─ utils.py              # Time helpers, folder path utils
-├─ requirements.txt      # Python dependencies
-└─ README.md             # Documentation
 
 ````
 
@@ -50,155 +47,119 @@ arxiv_daily_org_pdfs/
 ## ⚙️ Installation
 
 ```bash
-git clone https://github.com/yourname/arxiv-daily-institutions.git
-cd arxiv-daily-institutions
+git clone https://github.com/<yourname>/arxiv-daily-paper.git
+cd arxiv-daily-paper
+
 python -m venv venv
-source venv/bin/activate   # Windows: venv\Scripts\activate
+source venv/bin/activate      # Windows: venv\Scripts\activate
+
 pip install -r requirements.txt
 ````
 
 ---
 
-## 🕒 Configuration (`config.py`)
+## 🔍 Key Configuration (`config.py`)
 
-### 1️⃣ Control how many papers to fetch (pagination)
+### Time Window Mode
 
 ```python
-MAX_RESULTS_PER_PAGE = 200    # per API page
-MAX_PAGES = 2                 # 2 pages = ~400 recent papers
+WINDOW_FIELD = "updated"    # "updated" | "published" | "both"
 ```
 
-### 2️⃣ Time Window Mode (IMPORTANT)
+| Mode        | Meaning                                            |
+| ----------- | -------------------------------------------------- |
+| `updated`   | Papers updated yesterday (v2, v3 etc.)             |
+| `published` | Only papers first submitted yesterday              |
+| `both`      | Strict: must be both published & updated yesterday |
+
+---
+
+### Institution Detection Source
 
 ```python
-WINDOW_FIELD = "updated"   # "updated" | "published" | "both"
+CLASSIFY_FROM_PDF = True    # ← Use PDF author/affiliation data
 ```
 
-| Mode        | Meaning                                                  |
-| ----------- | -------------------------------------------------------- |
-| `updated`   | Catch papers with **any update yesterday (v2, v3)**      |
-| `published` | Only papers **first submitted yesterday**                |
-| `both`      | Very strict: papers both *published & updated* yesterday |
-
-### 3️⃣ Add / Expand Institutions
+### Pagination (To Explore Deep Backlog)
 
 ```python
-INSTITUTIONS_PATTERNS = {
-    "Google":  [...],
-    "MIT":     [...],
-    "OpenAI":  [...],
-}
+MAX_RESULTS_PER_PAGE = 200
+MAX_PAGES = 10
+```
+
+### Per-Organization Fallback Search (API search)
+
+```python
+PER_ORG_SEARCH_LIMIT_PAGES = 5
+PER_ORG_SEARCH_PAGE_SIZE   = 200
 ```
 
 ---
 
-## 🚀 Run the Collector
+## 🚀 Run
 
 ```bash
 python app.py
 ```
 
----
-
-## 🧪 DRY-RUN Mode (Only simulate, don't download)
-
-In `config.py`:
+### Dry-Run for Testing
 
 ```python
+# config.py
 DRY_RUN = True
-LIMIT_PER_ORG = 2   # Only show 2 papers per org (for testing)
+LIMIT_PER_ORG = 2
 ```
 
 ---
 
-## 📁 Output Example
+## 🗂 Output Example
 
 ```
 output_org_pdfs/
-└── 2025-10-14/
+└── 2025-10-16/
     ├── Google/
-    │   ├── 2503.12345v2.pdf
+    │   └── 2510.13778v1.pdf
     ├── OpenAI/
-    │   ├── 2504.09876v1.pdf
-    ├── MIT/
-    │   ├── 2504.19176v2.pdf
+    │   └── 2510.13724v1.pdf
+    └── ETH/
+        └── 2510.11448v2.pdf
 ```
 
 ---
 
-## 🛡️ Network Resilience
+## 🧠 Why PDF Affiliation Classification?
 
-* Custom **User-Agent**
-* Automatic retry with **fallback URLs**
-* Supports **NO_PROXY** for direct arXiv access
+| Title/Abstract-Based           | PDF Author Block-Based                      |
+| ------------------------------ | ------------------------------------------- |
+| ❌ Many mistakes                | ✅ Accurate                                  |
+| Authors rarely mention company | Real affiliation printed under authors      |
+| Hard to detect labs            | Institution logo / lab name clearly present |
 
 ---
 
 ## 🔧 Automation (Optional)
 
-### Cron (Linux server)
-
-```
-0 8 * * *  /usr/bin/python3 /path/to/app.py
-```
-
-### GitHub Actions (UTC 00:00 → Beijing 08:00)
+### GitHub Actions (Daily @ 08:00 Beijing)
 
 ```yaml
 schedule:
-  - cron: "0 0 * * *"
+  - cron: "0 0 * * *"   # 08:00 BJT
 ```
 
 ---
 
-## 🧩 Extending Institutions
+## 🤝 Future Ideas
 
-Track any combination of:
-
-| Category      | Examples                  |
-| ------------- | ------------------------- |
-| Big Tech      | OpenAI, Anthropic, Amazon |
-| China AI Labs | Huawei, Baidu, SenseTime  |
-| Universities  | MIT, Stanford, Tsinghua   |
-| Research Orgs | AI2, LAION, EleutherAI    |
-
-Just edit:
-
-```
-INSTITUTIONS_PATTERNS
-ORG_SEARCH_TERMS
-```
-
----
-
-## 🐛 Troubleshooting
-
-| Issue           | Fix                                     |
-| --------------- | --------------------------------------- |
-| 404 on PDF      | Canonical `.pdf` fallback enabled       |
-| SSL timeout     | Uses HTTP fallback + retry              |
-| No papers found | Increase MAX_PAGES & check WINDOW_FIELD |
-
----
-
-## 🤝 Contributions
-
-Feel free to submit:
-
-* Better institution regex
-* New organization tracking
-* Feature requests (like mailing, Web UI)
+* 📬 Email / Telegram / Slack Digest
+* 🎨 Web Dashboard (Flask / FastAPI)
+* 🧪 Research Topic Classification (LLM)
 
 ---
 
 ## 📜 License
 
-MIT License – You are free to modify and automate.
+MIT License. Free to modify, fork, automate.
 
 ---
 
-### 🌟 Enjoy research without manual filtering!
-
-If this project saves you time, consider starring ⭐ or sharing it!
-
-```
+🌟 If this tool saves your research time, star the repo & share it!

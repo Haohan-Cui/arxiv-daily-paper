@@ -49,6 +49,7 @@ desktop.ini
 # -------------------------
 output/
 output_org_pdfs/
+cache_pdfs/
 downloads/
 cache/
 

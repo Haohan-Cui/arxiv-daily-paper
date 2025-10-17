@@ -1,3 +1,14 @@
-feedparser==6.0.11
+# Core dependencies
 requests>=2.32.0
+feedparser>=6.0.11
+
+# Timezone support (for Windows & others)
 tzdata>=2024.1
+
+# PDF processing (for affiliation extraction)
+PyMuPDF>=1.23.25   # you can pin to latest stable
+# Alternative fallback (optional, if you want)
+# pypdf>=4.1.0
+
+# For structured datetime handling (optional)
+python-dateutil>=2.8.2
