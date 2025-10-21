@@ -26,7 +26,7 @@ CONNECT_TIMEOUT_SEC = 30
 READ_TIMEOUT_SEC = 120
 
 # 时间窗口依据： 'updated'（昨天有任何更新就算）| 'published'（昨天首次投稿）| 'both'
-WINDOW_FIELD = "updated"       # ← 新增：用来解决“跨月编号”带来的困惑
+WINDOW_FIELD = "published"       # ← 新增：用来解决“跨月编号”带来的困惑
 
 # -------------------------------
 # PDF 分类相关
@@ -47,9 +47,9 @@ AFFIL_HINT_KEYWORDS = [
 # arXiv API & 网络
 # -------------------------------
 ARXIV_API_ENDPOINTS = [
-    "https://export.arxiv.org/api/query",  # 首选
-    "http://export.arxiv.org/api/query",   # SSL 问题回退
-    "https://arxiv.org/api/query",         # 备用
+    "https://arxiv.org/api/query",       # ← 先用主站
+    "https://export.arxiv.org/api/query",
+    "http://export.arxiv.org/api/query",
 ]
 REQUEST_TIMEOUT = (20, 120)   # (connect_timeout, read_timeout)
 
@@ -63,8 +63,8 @@ RESPECT_ENV_PROXIES = True
 NO_PROXY_HOSTS = ["arxiv.org", "export.arxiv.org"]
 
 # 拉取范围 / 分页
-MAX_RESULTS_PER_PAGE = 200     # 每页上限 200
-MAX_PAGES = 10                 # 10 页≈2000条（足够覆盖昨天窗口）
+MAX_RESULTS_PER_PAGE = 100     # 每页上限 200
+MAX_PAGES = 20                 # 10 页≈2000条（足够覆盖昨天窗口）
 
 # 直搜（fallback）分页（给 app.py 的 per-org 直搜使用）
 PER_ORG_SEARCH_LIMIT_PAGES = 5       # ← 新增：每个机构直搜最多扫几页
