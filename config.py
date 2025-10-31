@@ -64,7 +64,7 @@ NO_PROXY_HOSTS = ["arxiv.org", "export.arxiv.org"]
 
 # 拉取范围 / 分页
 MAX_RESULTS_PER_PAGE = 100     # 每页上限 200
-MAX_PAGES = 20                 # 10 页≈2000条（足够覆盖昨天窗口）
+MAX_PAGES = 5                # 10 页≈2000条（足够覆盖昨天窗口）
 
 # 直搜（fallback）分页（给 app.py 的 per-org 直搜使用）
 PER_ORG_SEARCH_LIMIT_PAGES = 5       # ← 新增：每个机构直搜最多扫几页

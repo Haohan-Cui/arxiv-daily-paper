@@ -29,16 +29,18 @@ def _debug_print_window(now, start_utc, end_utc):
 def _collect_baseline_entries(start_utc, end_utc) -> List[Dict]:
     """
     基线：遍历 cs.* 多页（由 fetch_arxiv 按 config 控制分页），再按时间窗口过滤。
+    新增：传入 start_utc，让 iter_recent_cs 能在遇到旧论文时提前中断。
     """
     entries: List[Dict] = []
     total_scanned = 0
-    for e in iter_recent_cs():           # 内部已用 MAX_RESULTS_PER_PAGE / MAX_PAGES
+    for e in iter_recent_cs(start_utc=start_utc):   # ✅ 这里传入 start_utc
         total_scanned += 1
         if is_cs(e) and in_time_window(e, start_utc, end_utc):
             entries.append(e)
     if DEBUG:
         print(f"[DEBUG] scanned={total_scanned}  baseline_matches={len(entries)}")
     return entries
+
 
 def build_candidates_with_fallback(baseline_entries: List[Dict], start_utc, end_utc) -> List[Dict]:
     """

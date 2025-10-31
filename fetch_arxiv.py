@@ -13,19 +13,20 @@ from config import (
 )
 from config import DEBUG
 
-# 可在 config.py 里加开关；这里给默认值，若你已在 config 里声明同名变量则忽略
+# 分片控制：可在 config.py 里覆盖
 try:
     from config import USE_SHARDED_BASELINE
 except Exception:
     USE_SHARDED_BASELINE = True
 
-# 常见 CS 子类分片（可按需增减）
+# 常见计算机科学子类分片
 CS_SHARDS = [
     "cs.AI", "cs.CL", "cs.CV", "cs.LG", "cs.RO", "cs.CR", "cs.DS",
     "cs.IR", "cs.MA", "cs.SE", "cs.NI", "cs.DC", "cs.SD", "cs.HC",
     "cs.MM", "cs.IT", "cs.CY", "cs.SY", "cs.LO", "cs.LI", "cs.SI",
 ]
 
+# ---- HTTP session ----
 def _build_session() -> requests.Session:
     s = requests.Session()
     retry = Retry(
@@ -53,6 +54,7 @@ def _build_session() -> requests.Session:
 
 _SESSION = _build_session()
 
+# ---- API Core ----
 def _get_with_fallback(params: Dict[str, Any]) -> str:
     last_exc = None
     for endpoint in ARXIV_API_ENDPOINTS:
@@ -65,6 +67,7 @@ def _get_with_fallback(params: Dict[str, Any]) -> str:
             time.sleep(0.5)
     raise last_exc
 
+# ---- Utilities ----
 def _parse_dt(s: Optional[str]) -> Optional[datetime]:
     if not s:
         return None
@@ -87,30 +90,23 @@ def _entry_to_dict(e: Any) -> Dict[str, Any]:
         "links": e.get("links", []),
     }
 
-def _debug_page_hint(kind: str, page: int, start: int, entries: List[Dict[str, Any]], shard: Optional[str]=None):
-    if not DEBUG or not entries:
-        return
-    first = entries[0]; last = entries[-1]
-    f_pub = first.get("published"); f_upd = first.get("updated")
-    l_pub = last.get("published");  l_upd = last.get("updated")
-    shard_info = f" shard={shard}" if shard else ""
-    print(
-        "[DEBUG] {kind} page={page} start={start}{shard} count={cnt} "
-        "first(pub={fp}, upd={fu}) last(pub={lp}, upd={lu})"
-        .format(
-            kind=kind, page=page, start=start, shard=shard_info, cnt=len(entries),
-            fp=f_pub.isoformat() if f_pub else None,
-            fu=f_upd.isoformat() if f_upd else None,
-            lp=l_pub.isoformat() if l_pub else None,
-            lu=l_upd.isoformat() if l_upd else None,
-        )
-    )
+# ---- Query Helpers ----
+def query_cs_sorted(start: int, max_results: int):
+    """主查询入口：按时间降序获取 cs.*"""
+    params = {
+        "search_query": "cat:cs.*",
+        "sortBy": "submittedDate",
+        "sortOrder": "descending",
+        "start": start,
+        "max_results": max_results,
+    }
+    xml = _get_with_fallback(params)
+    return feedparser.parse(xml)
 
-# ---- API helpers
 def _query_feed(search_query: str, sort_by: str, start: int, max_results: int):
     params = {
         "search_query": search_query,
-        "sortBy": sort_by,              # 'submittedDate' or 'lastUpdatedDate'
+        "sortBy": sort_by,
         "sortOrder": "descending",
         "start": start,
         "max_results": max_results,
@@ -124,60 +120,66 @@ def _query_cat_submitted(cat: str, start: int, max_results: int):
 def _query_any(query: str, start: int, max_results: int):
     return _query_feed(query, "submittedDate", start, max_results)
 
-# ---- Baseline: single broad query (may be rate-limited on some mirrors)
-def iter_recent_cs_single() -> Iterable[Dict[str, Any]]:
+# ---- Baseline Iterators ----
+def iter_recent_cs_single(start_utc=None) -> Iterable[Dict[str, Any]]:
+    """单一大类抓取：适用于非分片模式"""
     start = 0
     page_size = MAX_RESULTS_PER_PAGE
     for page in range(MAX_PAGES):
-        feed = _query_feed("cat:cs.*", "submittedDate", start, page_size)
+        feed = query_cs_sorted(start, page_size)
         entries = feed.entries or []
         if not entries:
             if DEBUG:
                 print(f"[DEBUG] single page={page} start={start} -> 0 entries, stop.")
             break
-        rows = [_entry_to_dict(e) for e in entries]
-        _debug_page_hint("single", page, start, rows)
-        for row in rows:
+
+        for e in entries:
+            row = _entry_to_dict(e)
+            pub = row["published"]
+            if start_utc and pub and pub < start_utc:
+                if DEBUG:
+                    print(f"[DEBUG] stop at pub={pub}, before window start={start_utc}")
+                return
             yield row
         start += page_size
 
-# ---- Baseline (recommended): shard by category (cs.AI, cs.CL, ...)
-def iter_recent_cs_sharded() -> Iterable[Dict[str, Any]]:
-    """
-    对 cs.* 做分片抓取，绕开大类限流/忽略分页的问题。
-    每个 shard 都按照 submittedDate desc 做分页，最多 MAX_PAGES 页（总量=shards*MAX_PAGES*page_size）。
-    """
-    page_size = min(MAX_RESULTS_PER_PAGE, 200)  # 保守取 ≤200
+def iter_recent_cs_sharded(start_utc=None) -> Iterable[Dict[str, Any]]:
+    """分片抓取：遍历多个 cs 子类"""
+    page_size = min(MAX_RESULTS_PER_PAGE, 200)
     for shard in CS_SHARDS:
         start = 0
+        stop_shard = False  # ✅ 控制是否提前停止整个 shard
         for page in range(MAX_PAGES):
+            if stop_shard:
+                break
             feed = _query_cat_submitted(shard, start, page_size)
             entries = feed.entries or []
             if not entries:
                 if DEBUG:
                     print(f"[DEBUG] shard page={page} start={start} shard={shard} -> 0 entries, stop shard.")
                 break
-            rows = [_entry_to_dict(e) for e in entries]
-            _debug_page_hint("shard", page, start, rows, shard=shard)
-            for row in rows:
+            for e in entries:
+                row = _entry_to_dict(e)
+                pub = row["published"]
+                if start_utc and pub and pub < start_utc:
+                    if DEBUG:
+                        print(f"[DEBUG] stop shard={shard} at pub={pub}, before window start={start_utc}")
+                    stop_shard = True   # ✅ 标记整个 shard 需要停止
+                    break               # 跳出当前 entries 循环
                 yield row
             start += page_size
 
-# ---- Public iterator used by app.py
-def iter_recent_cs() -> Iterable[Dict[str, Any]]:
-    """
-    默认优先“分片抓取”。如需退回单一 'cat:cs.*' 查询，可在 config.py 设置：
-        USE_SHARDED_BASELINE = False
-    """
+# ---- Unified public interface ----
+def iter_recent_cs(limit_pages: int = MAX_PAGES, page_size: int = MAX_RESULTS_PER_PAGE, start_utc=None) -> Iterable[Dict[str, Any]]:
+    """供 app.py 调用的统一入口"""
     if USE_SHARDED_BASELINE:
-        yield from iter_recent_cs_sharded()
+        return iter_recent_cs_sharded(start_utc=start_utc)
     else:
-        yield from iter_recent_cs_single()
+        return iter_recent_cs_single(start_utc=start_utc)
 
+# ---- Per-org search ----
 def search_by_terms(terms, limit_pages=5, page_size=200):
-    """
-    (cat:cs.*) AND (all:term1 OR all:term2 ...)
-    """
+    """机构名关键字搜索 (cat:cs.*) AND (all:term1 OR all:term2 ...)"""
     if not terms:
         return
     or_block = " OR ".join([f'all:{t}' for t in terms])
@@ -190,11 +192,11 @@ def search_by_terms(terms, limit_pages=5, page_size=200):
             if DEBUG:
                 print(f"[DEBUG] per-org page={page} start={start} -> 0 entries, stop.")
             break
-        rows = [_entry_to_dict(e) for e in entries]
-        for row in rows:
-            yield row
+        for e in entries:
+            yield _entry_to_dict(e)
         start += page_size
 
+# ---- Misc helpers ----
 def extract_pdf_url(entry: Dict[str, Any]) -> str | None:
     for link in entry.get("links", []):
         if link.get("type") == "application/pdf":
@@ -203,5 +205,4 @@ def extract_pdf_url(entry: Dict[str, Any]) -> str | None:
 
 def get_arxiv_id(entry: Dict[str, Any]) -> str:
     raw = (entry.get("id") or "").rstrip("/")
-    last = raw.split("/")[-1]
-    return last
+    return raw.split("/")[-1]
