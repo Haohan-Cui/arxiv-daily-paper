@@ -1,97 +1,85 @@
-# DailyPaper Desktop / DailyPaper ???
+﻿# DailyPaper Desktop
 
-A desktop-first arXiv paper collector for selected Computer Science categories and target institutions.
+[Chinese README](README.zh-CN.md) | [Release Guide](RELEASE.md)
 
-????????? arXiv ???????????????????????????
+DailyPaper Desktop is a desktop-first arXiv paper collector for selected Computer Science categories and target institutions. It focuses on date-based collection, institution-aware filtering, PDF caching, and a Windows desktop workflow.
 
-## Features / ??
+## Highlights
 
-- Desktop GUI executable workflow, no browser required.
-- ????????????????????
-- Select any arXiv server date with a calendar picker.
-- ?????????? arXiv ??????
-- Editable institution list with aliases.
-- ????????????
-- Priority ranking for AI, LLM, vision, and robotics related categories.
-- ???? AI????????????????
-- PDF caching by date folder with JSON reports.
-- PDF ???????????? JSON ???
-- Lead/corresponding author affiliation filtering based on PDF author blocks.
-- ?? PDF ?????????/?????????
-- Runtime progress, pause, resume, and cancel support.
-- ????????????????
+- Desktop GUI workflow, no browser or local web server required
+- Calendar-based arXiv server date selection
+- Editable institution list with aliases
+- Priority ranking for AI, LLM, vision, and robotics related categories
+- PDF caching by date folder with JSON reports
+- Lead/corresponding author affiliation filtering from PDF author blocks
+- Runtime progress, pause, resume, and cancel support
+- Windows `.exe` packaging with PyInstaller
 
-## Project Layout / ????
+## Project Layout
 
 ```text
 DailyPaper/
-??? desktop_app.py          # desktop GUI / ??????
-??? app.py                  # main pipeline / ???
-??? fetch_arxiv.py          # arXiv API fetcher / arXiv ??
-??? prefetch.py             # PDF caching / PDF ??
-??? affil_classify.py       # affiliation matching / ????
-??? pdf_affil.py            # PDF author block extraction / PDF ?????
-??? runtime_control.py      # pause/cancel control / ??????
-??? pipeline_report.py      # structured stage report / ???????
-??? config.py               # runtime config / ??
-??? tests/                  # regression tests / ????
-??? build_exe.ps1           # PyInstaller build script / ????
+|- desktop_app.py          # Desktop GUI entry
+|- app.py                  # Main pipeline
+|- fetch_arxiv.py          # arXiv API fetcher
+|- prefetch.py             # PDF caching
+|- affil_classify.py       # Affiliation matching
+|- pdf_affil.py            # PDF author block extraction
+|- runtime_control.py      # Pause/cancel control
+|- pipeline_report.py      # Structured stage report
+|- config.py               # Runtime config
+|- tests/                  # Regression tests
+`- build_exe.ps1           # PyInstaller build script
 ```
 
-## Install / ??
+## Install
 
 ```powershell
 python -m venv venv
-.env\Scriptsctivate
+.\venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-## Run In Python / ????
+## Run From Python
 
 ```powershell
-.env\Scripts\python desktop_app.py
+.\venv\Scripts\python desktop_app.py
 ```
 
-## Build EXE / ?? EXE
+## Build EXE
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .uild_exe.ps1
+powershell -ExecutionPolicy Bypass -File .\build_exe.ps1
 ```
 
 Output executable:
-
-?????
 
 ```text
 dist/DailyPaperDesktop.exe
 ```
 
-## Current Pipeline / ????
+## Current Pipeline
 
-1. Select date and institution list.
-2. ??????????
-3. Fetch baseline papers from arXiv within the selected server-day window.
-4. ??? arXiv ?????????? baseline ???
-5. Run per-organization fallback search when needed.
-6. ?????????
-7. Rank priority categories.
-8. ????????
-9. Cache PDFs into `cache_pdfs/YYYY-MM-DD/`.
-10. ? PDF ??? `cache_pdfs/YYYY-MM-DD/`?
-11. Filter by author affiliation from PDF author blocks.
-12. ?? PDF ??????????
-13. Write reports to `cache_pdfs/_reports/YYYY-MM-DD/`.
-14. ????? `cache_pdfs/_reports/YYYY-MM-DD/`?
+1. Select an arXiv server date and institution list.
+2. Fetch baseline papers within the selected server-day window.
+3. Run per-organization fallback search when needed.
+4. Rank priority categories.
+5. Cache PDFs into `cache_pdfs/YYYY-MM-DD/`.
+6. Filter by author affiliation from PDF author blocks.
+7. Write reports to `cache_pdfs/_reports/YYYY-MM-DD/`.
 
-## Notes / ??
+## Documentation
 
-- The repository does not track runtime cache, downloaded PDFs, build output, or virtual environments.
-- ?????????????? PDF???????????
-- The desktop app is intended to replace the old web and `output_org` based workflow.
-- ????????????????? `output_org` ???????
+- Chinese README: [README.zh-CN.md](README.zh-CN.md)
+- Release and packaging guide: [RELEASE.md](RELEASE.md)
 
-## Test / ??
+## Test
 
 ```powershell
-.env\Scripts\python -m unittest discover -s tests -v
+.\venv\Scripts\python -m unittest discover -s tests -v
 ```
+
+## Notes
+
+- Runtime cache, downloaded PDFs, build output, and virtual environments are ignored by Git.
+- The desktop app replaces the previous web UI and old `output_org` workflow.
