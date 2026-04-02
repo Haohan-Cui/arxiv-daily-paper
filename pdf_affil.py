@@ -1,36 +1,116 @@
-# pdf_affil.py
-from __future__ import annotations
-from typing import Optional
-import fitz  # PyMuPDF
+﻿from __future__ import annotations
 
-def extract_affiliation_text(pdf_path: str, max_pages: int = 2) -> str:
-    """
-    只读取 PDF 前 max_pages 页，把可能出现的“作者+单位”区块抽出。
-    采用简单启发式：取顶部大块文本 + 包含逗号/上标数字/单位关键词的行。
+from typing import Iterable, List
+import re
+import fitz
+
+_AUTHOR_WINDOW_LINES = 10
+_EDGE_SCAN_LINES = 12
+_ABSTRACT_RE = re.compile(r"^\s*abstract\b", re.IGNORECASE)
+_CORRESPONDING_RE = re.compile(r"correspond|contact|通讯|邮箱|email", re.IGNORECASE)
+_AFFIL_RE = re.compile(
+    r"University|Institute|Laboratory|Lab|Dept|Department|School|College|Center|Centre|Academy|"
+    r"Research|Robotics|AI|Inc\.|Ltd\.|Company|作者|通讯|实验室|研究院|大学|学院|中心|公司",
+    re.IGNORECASE,
+)
+
+
+def _normalize(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+
+
+def _author_markers(authors: Iterable[str]) -> List[str]:
+    markers: List[str] = []
+    for author in list(authors)[:2]:
+        clean = _normalize(author)
+        if not clean:
+            continue
+        markers.append(clean)
+        parts = clean.split()
+        if parts:
+            markers.append(parts[-1])
+        if len(parts) >= 2:
+            markers.append(" ".join(parts[-2:]))
+    seen = set()
+    out: List[str] = []
+    for marker in markers:
+        if marker and marker not in seen:
+            seen.add(marker)
+            out.append(marker)
+    return out
+
+
+def _page_lines(page: fitz.Page) -> List[str]:
+    blocks = page.get_text("blocks") or []
+    ordered = sorted(blocks, key=lambda b: (b[1], b[0]))
+    lines: List[str] = []
+    for block in ordered:
+        text = (block[4] or "").strip()
+        if not text:
+            continue
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            if _ABSTRACT_RE.match(line):
+                return lines
+            lines.append(line)
+    return lines
+
+
+def _find_author_anchor(lines: List[str], authors: List[str]) -> int | None:
+    markers = _author_markers(authors)
+    normalized_lines = [_normalize(line) for line in lines]
+    for idx, line in enumerate(normalized_lines):
+        if any(marker and marker in line for marker in markers):
+            return idx
+    return None
+
+
+def _collect_candidate_lines(lines: List[str], anchor: int) -> List[str]:
+    window = lines[anchor:anchor + _AUTHOR_WINDOW_LINES]
+    relevant: List[str] = []
+    for idx, line in enumerate(window):
+        prev_line = window[idx - 1] if idx > 0 else ""
+        next_line = window[idx + 1] if idx + 1 < len(window) else ""
+        joined = " ".join([prev_line, line, next_line])
+        if _AFFIL_RE.search(joined) or _CORRESPONDING_RE.search(joined) or "@" in joined:
+            relevant.append(line)
+
+    if not relevant:
+        relevant = window[:4]
+    return relevant
+
+
+def _scan_top_and_bottom(lines: List[str], authors: List[str]) -> List[str]:
+    anchor = _find_author_anchor(lines, authors)
+    if anchor is not None:
+        return _collect_candidate_lines(lines, anchor)
+
+    edge_lines = lines[:_EDGE_SCAN_LINES] + lines[-_EDGE_SCAN_LINES:]
+    edge_anchor = _find_author_anchor(edge_lines, authors)
+    if edge_anchor is not None:
+        return _collect_candidate_lines(edge_lines, edge_anchor)
+
+    return _collect_candidate_lines(lines[:_EDGE_SCAN_LINES], 0)
+
+
+def extract_core_author_affiliation_text(pdf_path: str, authors: List[str], max_pages: int = 1) -> str:
+    """Extract affiliation cues near the first/corresponding author block on the first page.
+
+    The scan checks both the top matter and bottom-of-page author blocks because some templates
+    place affiliations in footers or bottom notes.
     """
     doc = fitz.open(pdf_path)
-    text_chunks = []
+    try:
+        if not len(doc):
+            return ""
+        lines = _page_lines(doc.load_page(0))
+    finally:
+        doc.close()
 
-    n = min(len(doc), max_pages if max_pages > 0 else 1)
-    for i in range(n):
-        page = doc.load_page(i)
-        # 直接用简单的文本抽取（保留换行），适配大多数 arXiv 论文
-        raw = page.get_text("text")
-        if not raw:
-            continue
-        lines = raw.splitlines()
-        filtered = []
-        for ln in lines:
-            s = ln.strip()
-            if not s:
-                continue
-            # 启发式：作者/单位区常含逗号、上标数字、“University/Institute/Lab”等关键词
-            if ("," in s) or ("University" in s) or ("Institute" in s) or ("Laboratory" in s) \
-               or ("Lab" in s) or ("Dept" in s) or ("Department" in s) \
-               or any(ch in s for ch in ["¹","²","³","⁴","^1","^2","^3"]):
-                filtered.append(s)
-        if filtered:
-            text_chunks.append("\n".join(filtered))
+    if not lines:
+        return ""
 
-    doc.close()
-    return "\n".join(text_chunks).strip()
+    relevant = _scan_top_and_bottom(lines, authors)
+    return "\n".join(relevant).strip()

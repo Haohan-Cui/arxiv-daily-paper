@@ -1,60 +1,93 @@
-# prefetch.py
 from __future__ import annotations
-import os, re, requests
-from typing import Dict, Any, List
+
+import re
 from pathlib import Path
+from typing import Any, Callable, Dict, List, Tuple
+
 from requests.exceptions import HTTPError
-from config import PDF_CACHE_DIR, CONNECT_TIMEOUT_SEC, READ_TIMEOUT_SEC
-from fetch_arxiv import get_arxiv_id  # 你之前已添加的工具函数
+
+from config import CONNECT_TIMEOUT_SEC, PDF_CACHE_DIR, READ_TIMEOUT_SEC
+from fetch_arxiv import get_arxiv_id, iter_pdf_urls, request_with_network_fallback
+from runtime_control import PipelineController
 
 SAFE_NAME = re.compile(r"[^a-zA-Z0-9._/-]+")
+ProgressCallback = Callable[[str, str, str, float | None], None]
+
 
 def ensure_dir(p: str | Path):
     Path(p).mkdir(parents=True, exist_ok=True)
 
-def canonical_pdf_urls(arxiv_id: str) -> List[str]:
-    urls = [f"https://arxiv.org/pdf/{arxiv_id}.pdf"]
-    if "v" in arxiv_id:
-        base = arxiv_id.split("v")[0]
-        if base and base != arxiv_id:
-            urls.append(f"https://arxiv.org/pdf/{base}.pdf")
-    return urls
 
-def cache_pdfs(entries: List[Dict[str, Any]]) -> Dict[str, str]:
-    """
-    预下载所有候选 entry 到 PDF_CACHE_DIR，返回 {arxiv_id: local_path}
-    已存在则跳过。
-    """
-    ensure_dir(PDF_CACHE_DIR)
+def _emit_progress(callback: ProgressCallback | None, stage: str, message: str, state: str = "info", percent: float | None = None) -> None:
+    if callback:
+        callback(stage, message, state, percent)
+
+
+def cache_pdfs(entries: List[Dict[str, Any]], report_date: str | None = None) -> Dict[str, str]:
+    cached, _stats = cache_pdfs_with_stats(entries, report_date=report_date)
+    return cached
+
+
+def cache_pdfs_with_stats(
+    entries: List[Dict[str, Any]],
+    report_date: str | None = None,
+    controller: PipelineController | None = None,
+    progress_callback: ProgressCallback | None = None,
+) -> Tuple[Dict[str, str], Dict[str, Any]]:
+    cache_dir = Path(PDF_CACHE_DIR) / report_date if report_date else Path(PDF_CACHE_DIR)
+    ensure_dir(cache_dir)
     out: Dict[str, str] = {}
-    sess = requests.Session()
-    sess.headers.update({"User-Agent": "DailyPaper/1.0 (+cache)"})
+    stats: Dict[str, Any] = {
+        "attempted": len(entries),
+        "cache_hits": 0,
+        "downloaded": 0,
+        "failed": 0,
+        "errors": [],
+        "cache_dir": str(cache_dir),
+    }
 
-    for e in entries:
-        aid = get_arxiv_id(e)  # e.g. 2506.16012v2
+    total = len(entries) or 1
+    for index, entry in enumerate(entries, start=1):
+        if controller:
+            controller.checkpoint()
+        aid = get_arxiv_id(entry)
+        percent = index / total * 100.0
+        _emit_progress(progress_callback, "pdf_cache", f"???? PDF {index}/{len(entries)}: {aid}", "running", percent)
         rel = SAFE_NAME.sub("_", aid) + ".pdf"
-        fpath = Path(PDF_CACHE_DIR) / rel
+        fpath = cache_dir / rel
         if fpath.exists():
             out[aid] = str(fpath)
+            stats["cache_hits"] += 1
+            _emit_progress(progress_callback, "pdf_cache", f"????: {aid}", "running", percent)
             continue
+
         last_err = None
-        for url in canonical_pdf_urls(aid):
+        for url in iter_pdf_urls(aid):
+            if controller:
+                controller.checkpoint()
             try:
-                r = sess.get(url, timeout=(CONNECT_TIMEOUT_SEC, READ_TIMEOUT_SEC))
-                r.raise_for_status()
-                with open(fpath, "wb") as f:
-                    f.write(r.content)
+                response = request_with_network_fallback(url, timeout=(CONNECT_TIMEOUT_SEC, READ_TIMEOUT_SEC))
+                response.raise_for_status()
+                with open(fpath, "wb") as handle:
+                    handle.write(response.content)
                 out[aid] = str(fpath)
+                stats["downloaded"] += 1
+                _emit_progress(progress_callback, "pdf_cache", f"???: {aid}", "running", percent)
                 break
-            except HTTPError as e2:
-                last_err = e2
-                if e2.response is not None and e2.response.status_code == 404:
+            except HTTPError as exc:
+                last_err = exc
+                if exc.response is not None and exc.response.status_code == 404:
                     continue
-                else:
-                    break
-            except Exception as e3:
-                last_err = e3
-                break
+                continue
+            except Exception as exc:
+                last_err = exc
+                continue
+
         if aid not in out:
-            print(f"[WARN] 缓存失败 {aid}: {last_err}")
-    return out
+            message = f"cache failed for {aid}: {last_err}"
+            stats["failed"] += 1
+            stats["errors"].append(message)
+            print(f"[WARN] {message}")
+            _emit_progress(progress_callback, "pdf_cache", f"????: {aid}", "warning", percent)
+
+    return out, stats
