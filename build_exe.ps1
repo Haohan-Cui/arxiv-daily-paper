@@ -7,5 +7,5 @@ if (-not (Test-Path $python)) {
     throw "??????? Python: $python"
 }
 
-& $python -m PyInstaller --noconfirm --clean --onefile --noconsole --name DailyPaperDesktop desktop_app.py
-Write-Host "?????????: dist\DailyPaperDesktop.exe"
+& $python -m PyInstaller --noconfirm --clean --onefile --noconsole --name DailyPaperDesktopLauncher desktop_app.py
+Write-Host "?????????: dist\DailyPaperDesktopLauncher.exe"

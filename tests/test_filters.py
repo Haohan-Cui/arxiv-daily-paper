@@ -2,7 +2,12 @@ import unittest
 from datetime import date, datetime, timezone
 
 from config import LOCAL_TZ
-from filters import arxiv_day_window, arxiv_previous_day_window, in_time_window, is_cs
+from filters import (
+    arxiv_day_window,
+    arxiv_previous_day_window,
+    in_time_window,
+    is_cs,
+)
 
 
 class FiltersTest(unittest.TestCase):
@@ -29,7 +34,11 @@ class FiltersTest(unittest.TestCase):
 
     def test_is_cs_respects_excluded_categories(self):
         self.assertTrue(is_cs({"primary_category": "cs.AI"}))
+        self.assertTrue(is_cs({"primary_category": "math.OC", "categories": ["math.OC", "cs.LG"]}))
         self.assertFalse(is_cs({"primary_category": "cs.GT"}))
+        self.assertFalse(is_cs({"primary_category": "cs.NI"}))
+        self.assertFalse(is_cs({"primary_category": "cs.PL"}))
+        self.assertFalse(is_cs({"primary_category": "cs.DB"}))
         self.assertFalse(is_cs({"primary_category": "math.OC"}))
 
 

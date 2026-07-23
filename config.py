@@ -21,18 +21,14 @@ def _get_tz(name: str, fallback_hours: int):
 LOCAL_TZ = _get_tz("America/New_York", -5)
 
 DEBUG = True
-DRY_RUN = False
-LIMIT_PER_ORG = 0
-DOWNLOAD_CONCURRENCY = 4
 CONNECT_TIMEOUT_SEC = 30
 READ_TIMEOUT_SEC = 120
-WINDOW_FIELD = "published"
-USE_SHARDED_BASELINE = True
 
 CLASSIFY_FROM_PDF = True
 PDF_CACHE_DIR = "cache_pdfs"
 CACHE_REPORT_DIR = "cache_pdfs/_reports"
 PRUNE_UNMATCHED_CACHED_PDFS = True
+MIN_PDF_BYTES = 1024 * 1024
 USE_HARDLINKS = True
 MAX_PDF_PAGES_TO_SCAN = 1
 PDF_EXTRACT_ENGINE = "pymupdf"
@@ -44,29 +40,27 @@ AFFIL_HINT_KEYWORDS = [
 ]
 
 ARXIV_API_ENDPOINTS = [
-    "https://arxiv.org/api/query",
     "https://export.arxiv.org/api/query",
-    "http://export.arxiv.org/api/query",
 ]
 
 REQUEST_TIMEOUT = (20, 120)
-RETRY_TOTAL = 7
-RETRY_BACKOFF = 1.5
 REQUESTS_UA = "DailyPaper/1.0 (+contact: your_email@example.com)"
+REQUEST_CONCURRENCY_LIMIT = 1
+SESSION_RATE_LIMIT_PER_MIN = 18
 
-PROXIES = None
+PROXIES = {
+    "http": "http://127.0.0.1:7897",
+    "https": "http://127.0.0.1:7897",
+}
 RESPECT_ENV_PROXIES = True
 NO_PROXY_HOSTS = ["arxiv.org", "export.arxiv.org"]
+ARXIV_API_USE_PROXY = True
 
-RATE_LIMIT_MIN_INTERVAL_SEC = 1.2
-FAILOVER_ON_429 = True
+RATE_LIMIT_MIN_INTERVAL_SEC = 3.1
+ARXIV_429_COOLDOWN_SEC = 7200
+ARXIV_429_COOLDOWN_MAX_SEC = 86400
 
-MAX_RESULTS_PER_PAGE = 100
-MAX_PAGES = 5
-PER_ORG_SEARCH_LIMIT_PAGES = 5
-PER_ORG_SEARCH_PAGE_SIZE = 200
-
-FALLBACK_SKIP_IF_BASELINE_AT_LEAST = 300
+MAX_RESULTS_PER_PAGE = 500
 
 PRIORITY_CATEGORIES = [
     "cs.CL",
@@ -115,7 +109,6 @@ INSTITUTIONS_PATTERNS = {
     "CMU": [r"\bCMU\b", r"\bCarnegie\s*Mellon\b"],
     "Berkeley": [r"\bUC\s*Berkeley\b", r"\bUCB\b", r"\bBerkeley\b", r"\bUniversity\s*of\s*California,\s*Berkeley\b"],
     "UIUC": [r"\bUIUC\b", r"\bUniversity\s*of\s*Illinois\s*Urbana(?:-| )Champaign\b", r"\bUniversity\s*of\s*Illinois\s*at\s*Urbana(?:-| )Champaign\b"],
-    "GeorgiaTech": [r"\bGeorgia\s*Tech\b", r"\bGeorgia\s*Institute\s*of\s*Technology\b"],
     "UTAustin": [r"\bUT\s*Austin\b", r"\bUniversity\s*of\s*Texas\s*at\s*Austin\b"],
     "UMich": [r"\bUniversity\s*of\s*Michigan\b", r"\bUMich\b", r"\bMichigan\b"],
     "UW": [r"\bUniversity\s*of\s*Washington\b", r"\bUW\b"],
@@ -123,8 +116,10 @@ INSTITUTIONS_PATTERNS = {
     "Cornell": [r"\bCornell\b", r"\bCornell\s*University\b"],
     "USC": [r"\bUSC\b", r"\bUniversity\s*of\s*Southern\s*California\b"],
     "Princeton": [r"\bPrinceton\b", r"\bPrinceton\s*University\b"],
+    "UPenn": [r"\bUPenn\b", r"\bUniversity\s*of\s*Pennsylvania\b", r"\bPenn\b", r"宾夕法尼亚大学", r"宾大"],
     "Oxford": [r"\bOxford\b", r"\bUniversity\s*of\s*Oxford\b"],
     "Cambridge": [r"\bCambridge\b", r"\bUniversity\s*of\s*Cambridge\b"],
+    "Yale": [r"\bYale\b", r"\bYale\s*University\b", r"耶鲁大学", r"耶鲁"],
     "ETH": [r"\bETH\b", r"\bETH\s*Zurich\b", r"\bETH\s*Z(?:u|u\u0308)rich\b"],
     "Tsinghua": [r"\bTsinghua\b", r"清华", r"\bTsinghua\s*University\b"],
     "PekingU": [r"\bPeking\s*University\b", r"\bPKU\b", r"北京大学"],
@@ -142,6 +137,10 @@ INSTITUTIONS_PATTERNS = {
     "Beihang": [r"\bBeihang\b", r"\bBeihang\s*University\b", r"北京航空航天大学", r"北航"],
     "SYSU": [r"\bSYSU\b", r"\bSun\s*Yat-sen\s*University\b", r"中山大学"],
     "HIT": [r"\bHIT\b", r"\bHarbin\s*Institute\s*of\s*Technology\b", r"哈尔滨工业大学", r"哈工大"],
+    "RenminU": [r"\bRenmin\s*University\s*of\s*China\b", r"\bRUC\b", r"中国人民大学", r"人大"],
+    "NYU": [r"\bNYU\b", r"\bNew\s*York\s*University\b", r"\bNew\s*York\s*Univ(?:ersity)?\b"],
+    "SUSTech": [r"\bSUSTech\b", r"\bSouthern\s*University\s*of\s*Science\s*and\s*Technology\b", r"南方科技大学", r"南科大"],
+    "SoutheastU": [r"\bSEU\b", r"\bSoutheast\s*University\b", r"东南大学"],
 }
 
 ORG_SEARCH_TERMS = {
@@ -183,7 +182,6 @@ ORG_SEARCH_TERMS = {
     "CMU": ['"CMU"', '"Carnegie Mellon"'],
     "Berkeley": ['"UC Berkeley"', '"UCB"', '"Berkeley"', '"University of California, Berkeley"'],
     "UIUC": ['"UIUC"', '"University of Illinois Urbana-Champaign"', '"University of Illinois at Urbana-Champaign"'],
-    "GeorgiaTech": ['"Georgia Tech"', '"Georgia Institute of Technology"'],
     "UTAustin": ['"UT Austin"', '"University of Texas at Austin"'],
     "UMich": ['"University of Michigan"', '"UMich"', '"Michigan"'],
     "UW": ['"University of Washington"', '"UW"'],
@@ -191,8 +189,10 @@ ORG_SEARCH_TERMS = {
     "Cornell": ['"Cornell"', '"Cornell University"'],
     "USC": ['"USC"', '"University of Southern California"'],
     "Princeton": ['"Princeton"', '"Princeton University"'],
+    "UPenn": ['"UPenn"', '"University of Pennsylvania"', '"Penn"', '宾夕法尼亚大学', '宾大'],
     "Oxford": ['"Oxford"', '"University of Oxford"'],
     "Cambridge": ['"Cambridge"', '"University of Cambridge"'],
+    "Yale": ['"Yale"', '"Yale University"', '耶鲁大学', '耶鲁'],
     "ETH": ['"ETH"', '"ETH Zurich"'],
     "Tsinghua": ['"Tsinghua"', '清华', '"Tsinghua University"'],
     "PekingU": ['"Peking University"', '"PKU"', '北京大学'],
@@ -210,12 +210,35 @@ ORG_SEARCH_TERMS = {
     "Beihang": ['"Beihang"', '"Beihang University"', '北京航空航天大学', '北航'],
     "SYSU": ['"SYSU"', '"Sun Yat-sen University"', '中山大学'],
     "HIT": ['"HIT"', '"Harbin Institute of Technology"', '哈尔滨工业大学', '哈工大'],
+    "RenminU": ['"Renmin University of China"', '"RUC"', '中国人民大学', '人大'],
+    "NYU": ['"NYU"', '"New York University"', '"New York Univ"'],
+    "SUSTech": ['"SUSTech"', '"Southern University of Science and Technology"', '南方科技大学', '南科大'],
+    "SoutheastU": ['"SEU"', '"Southeast University"', '东南大学'],
 }
 
-ARXIV_PRIMARY_CATEGORY_PREFIXES = ["cs."]
+ARXIV_PRIMARY_CATEGORY_PREFIXES = [
+    "cs.AI",
+    "cs.CL",
+    "cs.CV",
+    "cs.LG",
+    "cs.RO",
+    "cs.CR",
+    "cs.DS",
+    "cs.IR",
+    "cs.MA",
+    "cs.SE",
+    "cs.DC",
+    "cs.SD",
+    "cs.HC",
+    "cs.MM",
+    "cs.SY",
+    "cs.LO",
+    "cs.LI",
+]
 ARXIV_EXCLUDED_CATEGORIES = [
     "cs.GT",
     "cs.IT",
+    "cs.NI",
     "cs.CY",
     "cs.SI",
     "cs.DM",

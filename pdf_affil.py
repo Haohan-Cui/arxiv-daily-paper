@@ -1,8 +1,14 @@
 ﻿from __future__ import annotations
 
-from typing import Iterable, List
+from typing import Any, Iterable, List
+from pathlib import Path
+from html import unescape
 import re
-import fitz
+
+try:
+    import fitz
+except ModuleNotFoundError:
+    fitz = None
 
 _AUTHOR_WINDOW_LINES = 10
 _EDGE_SCAN_LINES = 12
@@ -40,7 +46,7 @@ def _author_markers(authors: Iterable[str]) -> List[str]:
     return out
 
 
-def _page_lines(page: fitz.Page) -> List[str]:
+def _page_lines(page: Any) -> List[str]:
     blocks = page.get_text("blocks") or []
     ordered = sorted(blocks, key=lambda b: (b[1], b[0]))
     lines: List[str] = []
@@ -55,6 +61,23 @@ def _page_lines(page: fitz.Page) -> List[str]:
             if _ABSTRACT_RE.match(line):
                 return lines
             lines.append(line)
+    return lines
+
+
+def _html_lines(path: str) -> List[str]:
+    raw = Path(path).read_text(encoding="utf-8", errors="ignore")
+    raw = re.sub(r"(?is)<(script|style).*?</\1>", " ", raw)
+    raw = re.sub(r"(?i)<br\s*/?>", "\n", raw)
+    raw = re.sub(r"(?i)</(p|div|section|article|h[1-6]|li|tr)>", "\n", raw)
+    text = unescape(re.sub(r"(?s)<[^>]+>", " ", raw))
+    lines: List[str] = []
+    for raw_line in text.splitlines():
+        line = re.sub(r"\s+", " ", raw_line).strip()
+        if not line:
+            continue
+        if _ABSTRACT_RE.match(line):
+            break
+        lines.append(line)
     return lines
 
 
@@ -101,13 +124,19 @@ def extract_core_author_affiliation_text(pdf_path: str, authors: List[str], max_
     The scan checks both the top matter and bottom-of-page author blocks because some templates
     place affiliations in footers or bottom notes.
     """
-    doc = fitz.open(pdf_path)
-    try:
-        if not len(doc):
-            return ""
-        lines = _page_lines(doc.load_page(0))
-    finally:
-        doc.close()
+    if Path(pdf_path).suffix.lower() in {".html", ".htm"}:
+        lines = _html_lines(pdf_path)
+    else:
+        if fitz is None:
+            raise RuntimeError("PyMuPDF (fitz) is required for PDF affiliation extraction")
+
+        doc = fitz.open(pdf_path)
+        try:
+            if not len(doc):
+                return ""
+            lines = _page_lines(doc.load_page(0))
+        finally:
+            doc.close()
 
     if not lines:
         return ""

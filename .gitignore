@@ -26,6 +26,8 @@ ENV/
 # -------------------------
 .vscode/
 .idea/
+.codex
+.codex/
 *.sublime-project
 *.sublime-workspace
 

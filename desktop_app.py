@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import argparse
+import json
 import os
 import queue
+import sys
 import threading
 from datetime import date, timedelta
 from pathlib import Path
@@ -25,6 +28,122 @@ from utils import now_local
 UI_FONT = ("Microsoft YaHei UI", 10)
 UI_FONT_BOLD = ("Microsoft YaHei UI", 10, "bold")
 TITLE_FONT = ("Microsoft YaHei UI", 20, "bold")
+def _user_state_dir() -> Path:
+    base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+    if base:
+        return Path(base) / "DailyPaper"
+    return Path.home() / ".dailypaper"
+
+
+SETTINGS_PATH = _user_state_dir() / "dailypaper_desktop_settings.json"
+
+
+def _json_default(value: Any):
+    if hasattr(value, "isoformat"):
+        try:
+            return value.isoformat()
+        except Exception:
+            pass
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
+def _result_payload(result: Dict[str, Any]) -> Dict[str, Any]:
+    report = result.get("report")
+    return {
+        "status": "ok",
+        "report_date": result.get("report_date"),
+        "candidate_count": len(result.get("candidates") or []),
+        "ordered_candidate_count": len(result.get("ordered_candidates") or []),
+        "filtered_candidate_count": len(result.get("filtered_candidates") or []),
+        "cached_count": len(result.get("cached") or {}),
+        "json_outputs": result.get("json_outputs") or {},
+        "report": report.to_dict() if report is not None else None,
+        "filtered_candidates": result.get("filtered_candidates") or [],
+    }
+
+
+def _normalized_institutions_text(text: str) -> str:
+    lines = [line.rstrip() for line in text.splitlines()]
+    while lines and not lines[-1]:
+        lines.pop()
+    normalized = "\n".join(lines).strip()
+    return normalized
+
+
+def load_saved_institutions_text(settings_path: Path | None = None) -> str | None:
+    path = settings_path or SETTINGS_PATH
+    if not path.exists():
+        return None
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    text = payload.get("institutions_text")
+    if not isinstance(text, str):
+        return None
+    normalized = _normalized_institutions_text(text)
+    return normalized or None
+
+
+def save_institutions_text(text: str, settings_path: Path | None = None) -> str:
+    normalized = _normalized_institutions_text(text)
+    if not normalized:
+        raise ValueError("机构列表不能为空")
+    parse_institutions_text(normalized)
+    path = settings_path or SETTINGS_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"institutions_text": normalized}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return normalized
+
+
+def _load_custom_entries(args: argparse.Namespace):
+    if args.institutions_file:
+        return parse_institutions_text(Path(args.institutions_file).read_text(encoding="utf-8"))
+    if args.institutions_text:
+        return parse_institutions_text(args.institutions_text)
+    return None
+
+
+def run_cli_pipeline(args: argparse.Namespace) -> int:
+    try:
+        custom_entries = _load_custom_entries(args)
+        _org_search_terms, institution_patterns = build_runtime_institution_maps(custom_entries)
+        result = run_pipeline(target_day=args.target_day, institution_patterns=institution_patterns)
+        payload = _result_payload(result)
+        summary_text = build_result_overview(result)
+    except PipelineCancelled:
+        payload = {"status": "cancelled"}
+        summary_text = "任务已取消。"
+    except Exception as exc:
+        payload = {"status": "error", "error": str(exc)}
+        summary_text = f"执行失败:\n{exc}"
+
+    if args.output_json:
+        out_path = Path(args.output_json)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8")
+
+    if args.output_summary:
+        summary_path = Path(args.output_summary)
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        summary_path.write_text(summary_text, encoding="utf-8")
+
+    if not args.quiet:
+        print(summary_text)
+
+    return 0 if payload.get("status") == "ok" else 1
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="DailyPaper desktop app and headless runner")
+    parser.add_argument("--run-once", action="store_true", help="Run one pipeline job without opening the GUI")
+    parser.add_argument("--target-day", help="Target arXiv server day in YYYY-MM-DD format")
+    parser.add_argument("--institutions-file", help="UTF-8 text file, one institution per line")
+    parser.add_argument("--institutions-text", help="Institution definitions passed inline")
+    parser.add_argument("--output-json", help="Write machine-readable result JSON to this path")
+    parser.add_argument("--output-summary", help="Write human-readable summary text to this path")
+    parser.add_argument("--quiet", action="store_true", help="Suppress stdout summary")
+    return parser
 
 
 def default_target_date() -> date:
@@ -82,6 +201,7 @@ class DailyPaperDesktop:
         self.event_queue: queue.Queue[tuple[str, int, Any]] = queue.Queue()
         self.running = False
         self.active_task_id = 0
+        self.saved_institutions_text = load_saved_institutions_text() or institutions_text_from_terms()
 
         self._build_ui()
         self.root.after(120, self._drain_events)
@@ -137,12 +257,14 @@ class DailyPaperDesktop:
 
         self.institutions_text = ScrolledText(control_card, wrap="word", height=24, font=UI_FONT)
         self.institutions_text.pack(fill=BOTH, expand=True, pady=(8, 12))
-        self.institutions_text.insert("1.0", institutions_text_from_terms())
+        self.institutions_text.insert("1.0", self.saved_institutions_text)
 
         button_row = ttk.Frame(control_card)
         button_row.pack(fill=X)
         self.run_button = ttk.Button(button_row, text="\u5f00\u59cb\u6293\u53d6", command=self._run_pipeline_async)
         self.run_button.pack(side=LEFT)
+        self.save_button = ttk.Button(button_row, text="\u4fdd\u5b58\u673a\u6784", command=self._save_institutions)
+        self.save_button.pack(side=LEFT, padx=(8, 0))
         self.pause_button = ttk.Button(button_row, text="\u6682\u505c", command=self._pause_pipeline, state="disabled")
         self.pause_button.pack(side=LEFT, padx=(8, 0))
         self.resume_button = ttk.Button(button_row, text="\u7ee7\u7eed", command=self._resume_pipeline, state="disabled")
@@ -212,6 +334,20 @@ class DailyPaperDesktop:
         self.institutions_text.delete("1.0", END)
         self.institutions_text.insert("1.0", institutions_text_from_terms())
 
+    def _save_institutions(self, notify: bool = True) -> str | None:
+        try:
+            normalized = save_institutions_text(self.institutions_text.get("1.0", END))
+        except Exception as exc:
+            messagebox.showerror("\u4fdd\u5b58\u5931\u8d25", f"\u65e0\u6cd5\u4fdd\u5b58\u673a\u6784\u5217\u8868: {exc}")
+            return None
+        self.saved_institutions_text = normalized
+        self.institutions_text.delete("1.0", END)
+        self.institutions_text.insert("1.0", normalized)
+        self._append_log("\u673a\u6784\u5217\u8868\u5df2\u4fdd\u5b58\uff0c\u4e0b\u6b21\u542f\u52a8\u4f1a\u81ea\u52a8\u52a0\u8f7d\u3002")
+        if notify:
+            messagebox.showinfo("\u4fdd\u5b58\u6210\u529f", "\u673a\u6784\u5217\u8868\u5df2\u4fdd\u5b58\uff0c\u4e0b\u6b21\u542f\u52a8\u4f1a\u81ea\u52a8\u52a0\u8f7d\u3002")
+        return normalized
+
     def _set_summary(self, text: str) -> None:
         self.output_text.configure(state="normal")
         self.output_text.delete("1.0", END)
@@ -227,6 +363,7 @@ class DailyPaperDesktop:
     def _set_running_state(self, running: bool) -> None:
         self.running = running
         self.run_button.configure(state="disabled" if running else "normal")
+        self.save_button.configure(state="disabled" if running else "normal")
         self.pause_button.configure(state="normal" if running else "disabled")
         self.resume_button.configure(state="disabled")
         self.cancel_button.configure(state="normal" if running else "disabled")
@@ -237,8 +374,11 @@ class DailyPaperDesktop:
         try:
             target_day = self.date_picker.get_date()
             self.selected_date_var.set(target_day.isoformat())
-            custom_entries = parse_institutions_text(self.institutions_text.get("1.0", END))
-            org_search_terms, institution_patterns = build_runtime_institution_maps(custom_entries)
+            saved_text = self._save_institutions(notify=False)
+            if saved_text is None:
+                return
+            custom_entries = parse_institutions_text(saved_text)
+            _org_search_terms, institution_patterns = build_runtime_institution_maps(custom_entries)
         except Exception as exc:
             messagebox.showerror("\u8f93\u5165\u9519\u8bef", f"\u53c2\u6570\u89e3\u6790\u5931\u8d25: {exc}")
             return
@@ -257,12 +397,12 @@ class DailyPaperDesktop:
 
         worker = threading.Thread(
             target=self._run_pipeline_worker,
-            args=(task_id, target_day, org_search_terms, institution_patterns),
+            args=(task_id, target_day, institution_patterns),
             daemon=True,
         )
         worker.start()
 
-    def _run_pipeline_worker(self, task_id: int, target_day, org_search_terms, institution_patterns) -> None:
+    def _run_pipeline_worker(self, task_id: int, target_day, institution_patterns) -> None:
         controller = self.controller
         assert controller is not None
 
@@ -272,7 +412,6 @@ class DailyPaperDesktop:
         try:
             result = run_pipeline(
                 target_day=target_day,
-                org_search_terms=org_search_terms,
                 institution_patterns=institution_patterns,
                 controller=controller,
                 progress_callback=callback,
@@ -423,11 +562,18 @@ class DailyPaperDesktop:
             messagebox.showerror("\u6253\u5f00\u5931\u8d25", f"\u65e0\u6cd5\u6253\u5f00\u76ee\u5f55: {exc}")
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> int:
+    parser = build_arg_parser()
+    args = parser.parse_args(argv)
+
+    if args.run_once:
+        return run_cli_pipeline(args)
+
     root = Tk()
     DailyPaperDesktop(root)
     root.mainloop()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main(sys.argv[1:]))

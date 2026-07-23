@@ -1,7 +1,7 @@
 ﻿from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 
@@ -17,11 +17,11 @@ class StageReport:
 
     def start(self) -> None:
         self.status = "running"
-        self.started_at = datetime.utcnow()
+        self.started_at = datetime.now(timezone.utc)
 
     def finish(self, status: str = "ok") -> None:
         self.status = status
-        self.ended_at = datetime.utcnow()
+        self.ended_at = datetime.now(timezone.utc)
 
     def add_warning(self, message: str) -> None:
         self.warnings.append(message)

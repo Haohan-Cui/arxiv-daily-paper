@@ -12,9 +12,8 @@ def arxiv_day_window(target_day: date) -> Tuple[datetime, datetime]:
 
 
 def arxiv_previous_day_window(now_local: datetime) -> Tuple[datetime, datetime]:
-    """Return the previous calendar day in arXiv server time (America/New_York)."""
-    local_now = now_local.astimezone(LOCAL_TZ)
-    target_day = local_now.date() - timedelta(days=1)
+    """Return the previous arXiv server calendar day."""
+    target_day = now_local.astimezone(LOCAL_TZ).date() - timedelta(days=1)
     return arxiv_day_window(target_day)
 
 
@@ -24,6 +23,15 @@ def in_time_window(entry: Dict[str, Any], start_utc: datetime, end_utc: datetime
 
 
 def is_cs(entry: Dict[str, Any]) -> bool:
+    categories = [cat for cat in (entry.get("categories") or []) if isinstance(cat, str)]
+    if categories:
+        allowed = any(
+            any(cat.startswith(prefix) for prefix in ARXIV_PRIMARY_CATEGORY_PREFIXES)
+            for cat in categories
+        )
+        if not allowed:
+            return False
+        return not any(cat in set(ARXIV_EXCLUDED_CATEGORIES) for cat in categories)
     cat = entry.get("primary_category") or ""
     if not any(cat.startswith(prefix) for prefix in ARXIV_PRIMARY_CATEGORY_PREFIXES):
         return False
