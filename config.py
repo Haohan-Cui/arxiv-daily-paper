@@ -27,6 +27,8 @@ READ_TIMEOUT_SEC = 120
 CLASSIFY_FROM_PDF = True
 PDF_CACHE_DIR = "cache_pdfs"
 CACHE_REPORT_DIR = "cache_pdfs/_reports"
+PDF_CACHE_WITH_COMPANY_DIR = "with_company"
+PDF_CACHE_UNIVERSITY_ONLY_DIR = "university_only"
 PRUNE_UNMATCHED_CACHED_PDFS = True
 MIN_PDF_BYTES = 1024 * 1024
 USE_HARDLINKS = True
@@ -38,6 +40,27 @@ AFFIL_HINT_KEYWORDS = [
     "College", "School", "Center", "Centre", "Academy", "Corresponding",
     "author", "Email", "@"
 ]
+
+# Used only to separate cached papers after affiliation extraction.  The
+# institution filter itself continues to use INSTITUTIONS_PATTERNS unchanged.
+COMPANY_AFFILIATION_PATTERNS = [
+    r"\b(?:incorporated|inc\.?|ltd\.?|limited|llc|corp\.?|corporation|company|co\.?|gmbh|ag)\b",
+    r"\b(?:holdings)\b|(?:集团|公司|有限公司)",
+    r"\b(?:apple|meta|google|deepmind|nvidia|microsoft|openai|anthropic|ibm|amazon|adobe|"
+    r"toyota research institute|tencent|bytedance|alibaba|ant group|huawei|baidu|sensetime|"
+    r"deepseek|zhipu|moonshot|minimax|step ?fun)\b",
+]
+
+# These are the enterprise labels in the default institution list.  A paper
+# is put in the enterprise cache only when one of the institutions it matched
+# belongs to this set (or is clearly enterprise-like by its own label).
+COMPANY_INSTITUTION_NAMES = {
+    "Apple", "Meta", "Google", "NVIDIA", "Microsoft", "OpenAI", "Anthropic", "IBM", "Amazon",
+    "AI2", "Adobe", "BostonDynamics", "TRI", "SRI", "Tencent", "ByteDance", "Alibaba", "AntGroup",
+    "Huawei", "Baidu", "SenseTime", "DeepSeek", "ZhipuAI", "MoonshotAI", "MiniMax", "StepFun",
+    "ZeroOneAI", "BAAI", "ShanghaiAILab", "PJLab", "CAS", "腾讯", "字节跳动", "阿里巴巴", "蚂蚁集团", "华为", "百度", "商汤",
+    "深度求索", "智谱", "月之暗面", "稀宇科技", "阶跃星辰", "零一万物",
+}
 
 ARXIV_API_ENDPOINTS = [
     "https://export.arxiv.org/api/query",
