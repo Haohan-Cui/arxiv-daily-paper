@@ -1,12 +1,20 @@
 ﻿from __future__ import annotations
 
 import re
+import shutil
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Tuple
 
 from requests.exceptions import HTTPError
 
-from config import CONNECT_TIMEOUT_SEC, MIN_PDF_BYTES, PDF_CACHE_DIR, READ_TIMEOUT_SEC
+from config import (
+    CONNECT_TIMEOUT_SEC,
+    MIN_PDF_BYTES,
+    PDF_CACHE_DIR,
+    PDF_CACHE_UNIVERSITY_ONLY_DIR,
+    PDF_CACHE_WITH_COMPANY_DIR,
+    READ_TIMEOUT_SEC,
+)
 from fetch_arxiv import extract_pdf_url, get_arxiv_id, iter_pdf_urls, request_with_network_fallback
 from runtime_control import PipelineController
 
@@ -65,6 +73,46 @@ def _candidate_download_urls(entry: Dict[str, Any], aid: str) -> Iterable[Tuple[
     yield f"https://arxiv.org/html/{_base_arxiv_id(aid)}", "html"
 
 
+def _find_cached_file(cache_dir: Path, filename: str) -> Path | None:
+    direct = cache_dir / filename
+    if direct.exists():
+        return direct
+    for category in (PDF_CACHE_WITH_COMPANY_DIR, PDF_CACHE_UNIVERSITY_ONLY_DIR):
+        candidate = cache_dir / category / filename
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def organize_cached_pdfs(
+    id2pdf: Dict[str, str],
+    company_ids: Iterable[str],
+    report_date: str | None = None,
+) -> Dict[str, str]:
+    """Move cached documents into the company/university-only subdirectories."""
+    cache_dir = Path(PDF_CACHE_DIR) / report_date if report_date else Path(PDF_CACHE_DIR)
+    company_ids = set(company_ids)
+    organized: Dict[str, str] = {}
+    for aid, source_name in id2pdf.items():
+        source = Path(source_name)
+        category = PDF_CACHE_WITH_COMPANY_DIR if aid in company_ids else PDF_CACHE_UNIVERSITY_ONLY_DIR
+        destination_dir = cache_dir / category
+        destination_dir.mkdir(parents=True, exist_ok=True)
+        destination = destination_dir / source.name
+        try:
+            if source.resolve() != destination.resolve():
+                if destination.exists():
+                    source.unlink()
+                else:
+                    shutil.move(str(source), str(destination))
+            organized[aid] = str(destination)
+        except Exception:
+            # Keep the original path if an archival move fails; this does not
+            # affect filtering or report generation.
+            organized[aid] = str(source)
+    return organized
+
+
 def cache_pdfs(entries: List[Dict[str, Any]], report_date: str | None = None) -> Dict[str, str]:
     cached, _stats = cache_pdfs_with_stats(entries, report_date=report_date)
     return cached
@@ -97,7 +145,7 @@ def cache_pdfs_with_stats(
         percent = index / total * 100.0
         _emit_progress(progress_callback, "pdf_cache", f"正在缓存 PDF {index}/{len(entries)}: {aid}", "running", percent)
         rel = SAFE_NAME.sub("_", aid) + ".pdf"
-        fpath = cache_dir / rel
+        fpath = _find_cached_file(cache_dir, rel) or (cache_dir / rel)
         html_path = fpath.with_suffix(".html")
         if fpath.exists():
             existing_size = fpath.stat().st_size

@@ -25,7 +25,7 @@ from filters import (
     is_cs,
 )
 from pipeline_report import PipelineReport
-from prefetch import cache_pdfs_with_stats
+from prefetch import cache_pdfs_with_stats, organize_cached_pdfs
 from runtime_control import PipelineCancelled, PipelineController
 from utils import now_local
 
@@ -620,6 +620,13 @@ def run_pipeline(
         if author_stats.get("kept_entries", 0) == 0:
             report.stage("author_affiliation_filter").add_warning("no papers passed the lead/corresponding author affiliation filter")
         _finish_stage(report, "author_affiliation_filter", progress_callback, f"author affiliation filter complete, kept {len(filtered_candidates)} papers")
+
+        id2pdf = organize_cached_pdfs(
+            id2pdf,
+            author_stats.get("company_entries", []),
+            report_date=report_date,
+        )
+        result["cached"] = id2pdf
 
         _begin_stage(report, "cache_cleanup", progress_callback, "starting cache cleanup")
         cleanup_stats = {"removed_cached_pdfs": 0, "missing_cached_pdfs": 0, "errors": [], "cleanup_enabled": PRUNE_UNMATCHED_CACHED_PDFS}

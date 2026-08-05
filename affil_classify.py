@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import os
 from collections import defaultdict
-from typing import Any, DefaultDict, Dict, List, Tuple
+from typing import Any, DefaultDict, Dict, Iterable, List, Tuple
 import re
 import shutil
 
-from config import INSTITUTIONS_PATTERNS, MAX_PDF_PAGES_TO_SCAN, USE_HARDLINKS
+from config import COMPANY_AFFILIATION_PATTERNS, COMPANY_INSTITUTION_NAMES, INSTITUTIONS_PATTERNS, MAX_PDF_PAGES_TO_SCAN, USE_HARDLINKS
 from pdf_affil import extract_core_author_affiliation_text
 
 
@@ -16,6 +16,19 @@ def compile_patterns(institution_patterns: Dict[str, List[str]] | None = None):
         org: [re.compile(pattern, re.IGNORECASE) for pattern in patterns]
         for org, patterns in source.items()
     }
+
+
+def _is_company_institution(org: str, text: str, company_names: set[str]) -> bool:
+    """Classify only a matched target institution as an enterprise."""
+    if org.casefold() in {name.casefold() for name in company_names}:
+        return True
+    haystack = f"{org}\n{text}"
+    if any(re.search(pattern, org, re.IGNORECASE) for pattern in COMPANY_AFFILIATION_PATTERNS):
+        return True
+    # Avoid treating names such as "University of Technology" as companies.
+    if re.search(r"\b(?:technologies|technology)\b", org, re.IGNORECASE):
+        return not re.search(r"\b(?:university|institute|college|school|academy)\b", org, re.IGNORECASE)
+    return False
 
 
 def classify_from_pdf(
@@ -31,8 +44,10 @@ def classify_from_pdf_with_stats(
     entries: List[Dict[str, Any]],
     id2pdf: Dict[str, str],
     institution_patterns: Dict[str, List[str]] | None = None,
+    company_institution_names: Iterable[str] | None = None,
 ) -> Tuple[Dict[str, List[Dict[str, Any]]], Dict[str, Any]]:
     cpats = compile_patterns(institution_patterns)
+    company_names = set(company_institution_names or COMPANY_INSTITUTION_NAMES)
     buckets: DefaultDict[str, List[Dict[str, Any]]] = defaultdict(list)
     stats: Dict[str, Any] = {
         "entries": len(entries),
@@ -43,6 +58,8 @@ def classify_from_pdf_with_stats(
         "unmatched_entries": 0,
         "matched_orgs": {},
         "entry_matches": {},
+        "company_entries": [],
+        "university_only_entries": [],
         "errors": [],
     }
 
@@ -80,6 +97,10 @@ def classify_from_pdf_with_stats(
         if matched_orgs:
             stats["matched_entries"] += 1
             stats["entry_matches"][aid] = matched_orgs
+            if any(_is_company_institution(org, text, company_names) for org in matched_orgs):
+                stats["company_entries"].append(aid)
+            else:
+                stats["university_only_entries"].append(aid)
         else:
             stats["unmatched_entries"] += 1
 
