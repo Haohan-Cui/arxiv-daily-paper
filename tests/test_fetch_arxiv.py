@@ -183,6 +183,30 @@ class FetchArxivTest(unittest.TestCase):
         self.assertEqual([row["id"] for row in rows], ["http://arxiv.org/abs/1", "http://arxiv.org/abs/2"])
         self.assertEqual([call[0] for call in calls], ["cs.CL", "cs.LG"])
 
+    def test_iter_recent_cs_skips_category_when_all_503_retries_fail(self):
+        progress = []
+
+        def query(category, _start_utc, _end_utc, _start, _max_results):
+            if category == "cs.CL":
+                raise fetch_arxiv.ArxivServiceUnavailableError("503")
+            return _Feed([{"id": "http://arxiv.org/abs/2"}], items_per_page=500)
+
+        with mock.patch.object(fetch_arxiv, "ARXIV_PRIMARY_CATEGORY_PREFIXES", ["cs.CL", "cs.LG"]), \
+             mock.patch.object(fetch_arxiv, "MAX_RESULTS_PER_PAGE", 500), \
+             mock.patch.object(fetch_arxiv, "query_category_window", side_effect=query), \
+             mock.patch.object(fetch_arxiv, "_entry_to_dict", side_effect=lambda row: {
+                 **row,
+                 "published": datetime(2026, 6, 23, 12, tzinfo=timezone.utc),
+             }):
+            rows = list(fetch_arxiv.iter_recent_cs(
+                start_utc=datetime(2026, 6, 23, 4, tzinfo=timezone.utc),
+                end_utc=datetime(2026, 6, 24, 4, tzinfo=timezone.utc),
+                on_request_progress=progress.append,
+            ))
+
+        self.assertEqual([row["id"] for row in rows], ["http://arxiv.org/abs/2"])
+        self.assertTrue(any("skipping unavailable arXiv category cs.CL" in message for message in progress))
+
     def test_iter_recent_cs_category_continues_past_100_when_server_pages_at_100(self):
         calls = []
         pages = {

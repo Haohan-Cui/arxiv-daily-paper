@@ -22,6 +22,7 @@ from app import (
     parse_institutions_text,
     run_pipeline,
 )
+from config import COMPANY_INSTITUTION_NAMES, ORG_SEARCH_TERMS
 from runtime_control import PipelineCancelled, PipelineController
 from utils import now_local
 
@@ -75,6 +76,9 @@ def load_saved_institutions_text(settings_path: Path | None = None) -> str | Non
     if not path.exists():
         return None
     payload = json.loads(path.read_text(encoding="utf-8"))
+    grouped = [payload.get("enterprise_institutions_text"), payload.get("university_institutions_text")]
+    if any(isinstance(value, str) for value in grouped):
+        return _normalized_institutions_text("\n".join(value for value in grouped if isinstance(value, str))) or None
     text = payload.get("institutions_text")
     if not isinstance(text, str):
         return None
@@ -94,6 +98,48 @@ def save_institutions_text(text: str, settings_path: Path | None = None) -> str:
         encoding="utf-8",
     )
     return normalized
+
+
+def _default_institution_group_texts() -> tuple[str, str]:
+    company_terms = {name: terms for name, terms in ORG_SEARCH_TERMS.items() if name in COMPANY_INSTITUTION_NAMES}
+    university_terms = {name: terms for name, terms in ORG_SEARCH_TERMS.items() if name not in COMPANY_INSTITUTION_NAMES}
+    return institutions_text_from_terms(company_terms), institutions_text_from_terms(university_terms)
+
+
+def load_saved_institution_groups(settings_path: Path | None = None) -> tuple[str, str]:
+    path = settings_path or SETTINGS_PATH
+    if not path.exists():
+        return _default_institution_group_texts()
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    enterprise = payload.get("enterprise_institutions_text")
+    university = payload.get("university_institutions_text")
+    if isinstance(enterprise, str) or isinstance(university, str):
+        return _normalized_institutions_text(enterprise or ""), _normalized_institutions_text(university or "")
+
+    legacy = payload.get("institutions_text")
+    if isinstance(legacy, str) and legacy.strip():
+        entries = parse_institutions_text(legacy)
+        enterprise_entries = [entry for entry in entries if entry["name"] in COMPANY_INSTITUTION_NAMES]
+        university_entries = [entry for entry in entries if entry["name"] not in COMPANY_INSTITUTION_NAMES]
+        render = lambda items: "\n".join(f"{entry['name']}: {', '.join(entry['terms'])}" for entry in items)
+        return render(enterprise_entries), render(university_entries)
+    return _default_institution_group_texts()
+
+
+def save_institution_groups(enterprise_text: str, university_text: str, settings_path: Path | None = None) -> tuple[str, str]:
+    enterprise = _normalized_institutions_text(enterprise_text)
+    university = _normalized_institutions_text(university_text)
+    if not enterprise and not university:
+        raise ValueError("机构列表不能为空")
+    parse_institutions_text("\n".join(part for part in (enterprise, university) if part))
+    path = settings_path or SETTINGS_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "enterprise_institutions_text": enterprise,
+        "university_institutions_text": university,
+        "institutions_text": "\n".join(part for part in (enterprise, university) if part),
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
+    return enterprise, university
 
 
 def _load_custom_entries(args: argparse.Namespace):
@@ -201,7 +247,7 @@ class DailyPaperDesktop:
         self.event_queue: queue.Queue[tuple[str, int, Any]] = queue.Queue()
         self.running = False
         self.active_task_id = 0
-        self.saved_institutions_text = load_saved_institutions_text() or institutions_text_from_terms()
+        self.saved_enterprise_text, self.saved_university_text = load_saved_institution_groups()
 
         self._build_ui()
         self.root.after(120, self._drain_events)
@@ -253,11 +299,20 @@ class DailyPaperDesktop:
         ttk.Button(date_row, text="\u8bbe\u4e3a\u6628\u5929", command=self._set_yesterday).pack(side=LEFT)
         ttk.Label(date_row, textvariable=self.selected_date_var, font=UI_FONT_BOLD).pack(side=LEFT, padx=(12, 0))
 
-        ttk.Label(control_card, text="\u673a\u6784\u5217\u8868\u6bcf\u884c\u4e00\u6761\u3002\u683c\u5f0f: \u673a\u6784\u540d: \u522b\u540d1, \u522b\u540d2", font=UI_FONT).pack(anchor="w")
+        ttk.Label(control_card, text="\u6309\u7c7b\u522b\u5f55\u5165\u673a\u6784\uff1b\u6bcf\u884c\u4e00\u6761\uff0c\u683c\u5f0f: \u673a\u6784\u540d: \u522b\u540d1, \u522b\u540d2", font=UI_FONT).pack(anchor="w")
 
-        self.institutions_text = ScrolledText(control_card, wrap="word", height=24, font=UI_FONT)
-        self.institutions_text.pack(fill=BOTH, expand=True, pady=(8, 12))
-        self.institutions_text.insert("1.0", self.saved_institutions_text)
+        institution_pane = ttk.Panedwindow(control_card, orient="horizontal")
+        institution_pane.pack(fill=BOTH, expand=True, pady=(8, 12))
+        enterprise_frame = ttk.LabelFrame(institution_pane, text="\u4f01\u4e1a\u673a\u6784", padding=6)
+        university_frame = ttk.LabelFrame(institution_pane, text="\u9ad8\u6821 / \u79d1\u7814\u673a\u6784", padding=6)
+        institution_pane.add(enterprise_frame, weight=1)
+        institution_pane.add(university_frame, weight=1)
+        self.enterprise_institutions_text = ScrolledText(enterprise_frame, wrap="word", height=20, font=UI_FONT)
+        self.enterprise_institutions_text.pack(fill=BOTH, expand=True)
+        self.enterprise_institutions_text.insert("1.0", self.saved_enterprise_text)
+        self.university_institutions_text = ScrolledText(university_frame, wrap="word", height=20, font=UI_FONT)
+        self.university_institutions_text.pack(fill=BOTH, expand=True)
+        self.university_institutions_text.insert("1.0", self.saved_university_text)
 
         button_row = ttk.Frame(control_card)
         button_row.pack(fill=X)
@@ -274,7 +329,8 @@ class DailyPaperDesktop:
 
         more_button_row = ttk.Frame(control_card)
         more_button_row.pack(fill=X, pady=(8, 0))
-        ttk.Button(more_button_row, text="\u8ffd\u52a0\u673a\u6784\u6a21\u677f", command=self._append_institution_row).pack(side=LEFT)
+        ttk.Button(more_button_row, text="\u8ffd\u52a0\u4f01\u4e1a\u6a21\u677f", command=lambda: self._append_institution_row("enterprise")).pack(side=LEFT)
+        ttk.Button(more_button_row, text="\u8ffd\u52a0\u9ad8\u6821\u6a21\u677f", command=lambda: self._append_institution_row("university")).pack(side=LEFT, padx=(8, 0))
         ttk.Button(more_button_row, text="\u6062\u590d\u9ed8\u8ba4\u673a\u6784", command=self._reset_institutions).pack(side=LEFT, padx=(8, 0))
 
         result_card = ttk.LabelFrame(right, text="\u8fd0\u884c\u7ed3\u679c", padding=12)
@@ -324,29 +380,34 @@ class DailyPaperDesktop:
         self.selected_date_var.set(target.isoformat())
         self.root.update_idletasks()
 
-    def _append_institution_row(self) -> None:
-        current = self.institutions_text.get("1.0", END).rstrip()
+    def _append_institution_row(self, group: str = "university") -> None:
+        widget = self.enterprise_institutions_text if group == "enterprise" else self.university_institutions_text
+        current = widget.get("1.0", END).rstrip()
         suffix = "\n" if current else ""
-        self.institutions_text.delete("1.0", END)
-        self.institutions_text.insert("1.0", current + suffix + "\u65b0\u673a\u6784: \u522b\u540d1, \u522b\u540d2")
+        widget.delete("1.0", END)
+        widget.insert("1.0", current + suffix + "\u65b0\u673a\u6784: \u522b\u540d1, \u522b\u540d2")
 
     def _reset_institutions(self) -> None:
-        self.institutions_text.delete("1.0", END)
-        self.institutions_text.insert("1.0", institutions_text_from_terms())
+        enterprise, university = _default_institution_group_texts()
+        for widget, text in ((self.enterprise_institutions_text, enterprise), (self.university_institutions_text, university)):
+            widget.delete("1.0", END)
+            widget.insert("1.0", text)
 
     def _save_institutions(self, notify: bool = True) -> str | None:
         try:
-            normalized = save_institutions_text(self.institutions_text.get("1.0", END))
+            enterprise, university = save_institution_groups(
+                self.enterprise_institutions_text.get("1.0", END),
+                self.university_institutions_text.get("1.0", END),
+            )
         except Exception as exc:
             messagebox.showerror("\u4fdd\u5b58\u5931\u8d25", f"\u65e0\u6cd5\u4fdd\u5b58\u673a\u6784\u5217\u8868: {exc}")
             return None
-        self.saved_institutions_text = normalized
-        self.institutions_text.delete("1.0", END)
-        self.institutions_text.insert("1.0", normalized)
+        self.saved_enterprise_text = enterprise
+        self.saved_university_text = university
         self._append_log("\u673a\u6784\u5217\u8868\u5df2\u4fdd\u5b58\uff0c\u4e0b\u6b21\u542f\u52a8\u4f1a\u81ea\u52a8\u52a0\u8f7d\u3002")
         if notify:
             messagebox.showinfo("\u4fdd\u5b58\u6210\u529f", "\u673a\u6784\u5217\u8868\u5df2\u4fdd\u5b58\uff0c\u4e0b\u6b21\u542f\u52a8\u4f1a\u81ea\u52a8\u52a0\u8f7d\u3002")
-        return normalized
+        return "\n".join(part for part in (enterprise, university) if part)
 
     def _set_summary(self, text: str) -> None:
         self.output_text.configure(state="normal")
@@ -377,7 +438,10 @@ class DailyPaperDesktop:
             saved_text = self._save_institutions(notify=False)
             if saved_text is None:
                 return
-            custom_entries = parse_institutions_text(saved_text)
+            enterprise_entries = parse_institutions_text(self.saved_enterprise_text)
+            university_entries = parse_institutions_text(self.saved_university_text)
+            custom_entries = enterprise_entries + university_entries
+            company_names = [entry["name"] for entry in enterprise_entries]
             _org_search_terms, institution_patterns = build_runtime_institution_maps(custom_entries)
         except Exception as exc:
             messagebox.showerror("\u8f93\u5165\u9519\u8bef", f"\u53c2\u6570\u89e3\u6790\u5931\u8d25: {exc}")
@@ -397,12 +461,12 @@ class DailyPaperDesktop:
 
         worker = threading.Thread(
             target=self._run_pipeline_worker,
-            args=(task_id, target_day, institution_patterns),
+            args=(task_id, target_day, institution_patterns, company_names),
             daemon=True,
         )
         worker.start()
 
-    def _run_pipeline_worker(self, task_id: int, target_day, institution_patterns) -> None:
+    def _run_pipeline_worker(self, task_id: int, target_day, institution_patterns, company_names) -> None:
         controller = self.controller
         assert controller is not None
 
@@ -413,6 +477,7 @@ class DailyPaperDesktop:
             result = run_pipeline(
                 target_day=target_day,
                 institution_patterns=institution_patterns,
+                company_institution_names=company_names,
                 controller=controller,
                 progress_callback=callback,
             )

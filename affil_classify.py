@@ -22,7 +22,6 @@ def _is_company_institution(org: str, text: str, company_names: set[str]) -> boo
     """Classify only a matched target institution as an enterprise."""
     if org.casefold() in {name.casefold() for name in company_names}:
         return True
-    haystack = f"{org}\n{text}"
     if any(re.search(pattern, org, re.IGNORECASE) for pattern in COMPANY_AFFILIATION_PATTERNS):
         return True
     # Avoid treating names such as "University of Technology" as companies.
@@ -47,7 +46,9 @@ def classify_from_pdf_with_stats(
     company_institution_names: Iterable[str] | None = None,
 ) -> Tuple[Dict[str, List[Dict[str, Any]]], Dict[str, Any]]:
     cpats = compile_patterns(institution_patterns)
-    company_names = set(company_institution_names or COMPANY_INSTITUTION_NAMES)
+    company_names = set(
+        COMPANY_INSTITUTION_NAMES if company_institution_names is None else company_institution_names
+    )
     buckets: DefaultDict[str, List[Dict[str, Any]]] = defaultdict(list)
     stats: Dict[str, Any] = {
         "entries": len(entries),

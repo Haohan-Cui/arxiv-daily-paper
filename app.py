@@ -25,7 +25,7 @@ from filters import (
     is_cs,
 )
 from pipeline_report import PipelineReport
-from prefetch import cache_pdfs_with_stats, organize_cached_pdfs
+from prefetch import cache_pdfs_with_stats, organize_cached_pdfs, remove_small_university_pdfs
 from runtime_control import PipelineCancelled, PipelineController
 from utils import now_local
 
@@ -441,6 +441,7 @@ def filter_candidates_by_author_affiliation(
     institution_patterns: Dict[str, List[str]] | None = None,
     controller: PipelineController | None = None,
     progress_callback: ProgressCallback | None = None,
+    company_institution_names: List[str] | None = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     _checkpoint(controller)
     _emit_progress(progress_callback, "author_affiliation_filter", f"start author affiliation filtering for {len(ordered_entries)} papers", "running", _stage_percent("author_affiliation_filter"))
@@ -448,7 +449,12 @@ def filter_candidates_by_author_affiliation(
         stats = {"entries": len(ordered_entries), "matched_entries": len(ordered_entries), "unmatched_entries": 0, "matched_orgs": {}, "entry_matches": {}, "errors": [], "filter_disabled": True}
         return ordered_entries, stats
 
-    _buckets, classify_stats = classify_from_pdf_with_stats(ordered_entries, id2pdf, institution_patterns=institution_patterns)
+    _buckets, classify_stats = classify_from_pdf_with_stats(
+        ordered_entries,
+        id2pdf,
+        institution_patterns=institution_patterns,
+        company_institution_names=company_institution_names,
+    )
     matched_map = classify_stats.get("entry_matches", {})
     filtered = [entry for entry in ordered_entries if get_arxiv_id(entry) in matched_map]
     classify_stats["kept_entries"] = len(filtered)
@@ -546,6 +552,7 @@ def run_pipeline(
     now=None,
     target_day: date | str | None = None,
     institution_patterns: Dict[str, List[str]] | None = None,
+    company_institution_names: List[str] | None = None,
     controller: PipelineController | None = None,
     progress_callback: ProgressCallback | None = None,
 ) -> Dict[str, Any]:
@@ -612,7 +619,14 @@ def run_pipeline(
         _finish_stage(report, "pdf_cache", progress_callback, f"PDF cache complete, hits {cache_stats['cache_hits']}, downloads {cache_stats['downloaded']}, skipped small {cache_stats.get('skipped_small', 0)}")
 
         _begin_stage(report, "author_affiliation_filter", progress_callback, "starting author affiliation filter")
-        filtered_candidates, author_stats = filter_candidates_by_author_affiliation(result["ordered_candidates"], id2pdf, institution_patterns=institution_patterns, controller=controller, progress_callback=progress_callback)
+        filtered_candidates, author_stats = filter_candidates_by_author_affiliation(
+            result["ordered_candidates"],
+            id2pdf,
+            institution_patterns=institution_patterns,
+            controller=controller,
+            progress_callback=progress_callback,
+            company_institution_names=company_institution_names,
+        )
         result["filtered_candidates"] = filtered_candidates
         _record_stage_metrics(report, "author_affiliation_filter", author_stats)
         for message in author_stats.get("errors", [])[:20]:
@@ -626,6 +640,25 @@ def run_pipeline(
             author_stats.get("company_entries", []),
             report_date=report_date,
         )
+        id2pdf, size_cleanup_stats = remove_small_university_pdfs(
+            id2pdf,
+            author_stats.get("university_only_entries", []),
+        )
+        removed_small_ids = set(size_cleanup_stats.get("small_university_ids", []))
+        if removed_small_ids:
+            result["ordered_candidates"] = [
+                entry for entry in result["ordered_candidates"]
+                if get_arxiv_id(entry) not in removed_small_ids
+            ]
+            result["filtered_candidates"] = [
+                entry for entry in result["filtered_candidates"]
+                if get_arxiv_id(entry) not in removed_small_ids
+            ]
+        author_stats.update({
+            "removed_small_university_pdfs": size_cleanup_stats.get("removed_small_university_pdfs", 0),
+        })
+        for message in size_cleanup_stats.get("errors", []):
+            report.stage("author_affiliation_filter").add_warning(message)
         result["cached"] = id2pdf
 
         _begin_stage(report, "cache_cleanup", progress_callback, "starting cache cleanup")

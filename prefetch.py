@@ -132,6 +132,7 @@ def cache_pdfs_with_stats(
         "cache_hits": 0,
         "downloaded": 0,
         "skipped_small": 0,
+        "small_pdf_downloaded": 0,
         "failed": 0,
         "errors": [],
         "cache_dir": str(cache_dir),
@@ -148,23 +149,10 @@ def cache_pdfs_with_stats(
         fpath = _find_cached_file(cache_dir, rel) or (cache_dir / rel)
         html_path = fpath.with_suffix(".html")
         if fpath.exists():
-            existing_size = fpath.stat().st_size
-            if existing_size < MIN_PDF_BYTES:
-                stats["skipped_small"] += 1
-                try:
-                    fpath.unlink()
-                except Exception:
-                    pass
-                _emit_progress(
-                    progress_callback,
-                    "pdf_cache",
-                    f"跳过小于1MB的PDF缓存: {aid} ({existing_size} bytes)",
-                    "warning",
-                    percent,
-                )
-                continue
             out[aid] = str(fpath)
             stats["cache_hits"] += 1
+            if fpath.stat().st_size < MIN_PDF_BYTES:
+                stats["small_pdf_downloaded"] += 1
             _emit_progress(progress_callback, "pdf_cache", f"缓存命中: {aid}", "running", percent)
             continue
         if html_path.exists():
@@ -176,7 +164,6 @@ def cache_pdfs_with_stats(
         last_err = None
         last_url = None
         errors_seen: List[str] = []
-        skipped_small = False
         for url, document_type in _candidate_download_urls(entry, aid):
             last_url = url
             if controller:
@@ -190,17 +177,6 @@ def cache_pdfs_with_stats(
                 )
                 response.raise_for_status()
                 content_length = _content_length(response)
-                if document_type == "pdf" and content_length is not None and content_length < MIN_PDF_BYTES:
-                    stats["skipped_small"] += 1
-                    skipped_small = True
-                    _emit_progress(
-                        progress_callback,
-                        "pdf_cache",
-                        f"跳过小于1MB的PDF: {aid} ({content_length} bytes)",
-                        "warning",
-                        percent,
-                    )
-                    break
                 temp_path = current_path.with_suffix(f"{current_path.suffix}.part")
                 bytes_written = 0
                 with open(temp_path, "wb") as handle:
@@ -210,24 +186,11 @@ def cache_pdfs_with_stats(
                         if chunk:
                             bytes_written += len(chunk)
                             handle.write(chunk)
-                if document_type == "pdf" and bytes_written < MIN_PDF_BYTES:
-                    try:
-                        temp_path.unlink(missing_ok=True)
-                    except Exception:
-                        pass
-                    stats["skipped_small"] += 1
-                    skipped_small = True
-                    _emit_progress(
-                        progress_callback,
-                        "pdf_cache",
-                        f"跳过小于1MB的PDF: {aid} ({bytes_written} bytes)",
-                        "warning",
-                        percent,
-                    )
-                    break
                 temp_path.replace(current_path)
                 out[aid] = str(current_path)
                 stats["downloaded"] += 1
+                if document_type == "pdf" and bytes_written < MIN_PDF_BYTES:
+                    stats["small_pdf_downloaded"] += 1
                 label = "HTML fallback 下载完成" if document_type == "html" else "下载完成"
                 _emit_progress(progress_callback, "pdf_cache", f"{label}: {aid}", "running", percent)
                 break
@@ -247,7 +210,7 @@ def cache_pdfs_with_stats(
                     pass
                 continue
 
-        if aid not in out and not skipped_small:
+        if aid not in out:
             detail = "; ".join(errors_seen) if errors_seen else _format_download_error(last_url or "-", last_err)
             message = f"cache failed for {aid}: {detail}"
             stats["failed"] += 1
@@ -256,3 +219,37 @@ def cache_pdfs_with_stats(
             _emit_progress(progress_callback, "pdf_cache", f"缓存失败: {aid} ({message})", "warning", percent)
 
     return out, stats
+
+
+def remove_small_university_pdfs(
+    id2pdf: Dict[str, str],
+    university_ids: Iterable[str],
+    min_bytes: int = MIN_PDF_BYTES,
+) -> Tuple[Dict[str, str], Dict[str, Any]]:
+    """Remove undersized PDFs only after affiliation classification.
+
+    The PDF must be available for affiliation extraction first: a small PDF can
+    belong to an enterprise and must then be retained. HTML fallbacks are not
+    subject to the PDF byte threshold.
+    """
+    university_ids = set(university_ids)
+    removed: List[str] = []
+    errors: List[str] = []
+    result = dict(id2pdf)
+    for aid in university_ids:
+        filename = result.get(aid)
+        if not filename or Path(filename).suffix.lower() != ".pdf":
+            continue
+        path = Path(filename)
+        try:
+            if path.exists() and path.stat().st_size < min_bytes:
+                path.unlink()
+                removed.append(aid)
+                result.pop(aid, None)
+        except Exception as exc:
+            errors.append(f"remove small university PDF failed for {aid}: {exc}")
+    return result, {
+        "removed_small_university_pdfs": len(removed),
+        "small_university_ids": removed,
+        "errors": errors,
+    }

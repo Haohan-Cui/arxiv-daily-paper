@@ -596,14 +596,25 @@ def iter_recent_cs_by_category(
             on_request_progress(f"querying arXiv category {category_index + 1}/{len(categories)}: {category}")
         while True:
             current_start = start
-            feed, actual_page_size = _query_category_window_adaptive(
-                category,
-                start_utc,
-                end_utc,
-                start,
-                page_size,
-                on_request_progress=on_request_progress,
-            )
+            try:
+                feed, actual_page_size = _query_category_window_adaptive(
+                    category,
+                    start_utc,
+                    end_utc,
+                    start,
+                    page_size,
+                    on_request_progress=on_request_progress,
+                )
+            except ArxivServiceUnavailableError as exc:
+                # A 503 is a temporary failure of one category/query. Keep
+                # the papers already collected and continue with the other
+                # categories instead of aborting the whole daily run.
+                message = f"skipping unavailable arXiv category {category}: {exc}"
+                if DEBUG:
+                    print(f"[WARN] {message}")
+                if on_request_progress:
+                    on_request_progress(message)
+                break
             entries = feed.entries or []
             if not entries:
                 break
