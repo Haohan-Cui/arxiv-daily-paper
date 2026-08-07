@@ -56,9 +56,9 @@ COMPANY_AFFILIATION_PATTERNS = [
 # belongs to this set (or is clearly enterprise-like by its own label).
 COMPANY_INSTITUTION_NAMES = {
     "Apple", "Meta", "Google", "NVIDIA", "Microsoft", "OpenAI", "Anthropic", "IBM", "Amazon",
-    "AI2", "Adobe", "BostonDynamics", "TRI", "SRI", "Tencent", "ByteDance", "Alibaba", "AntGroup",
+    "Adobe", "BostonDynamics", "TRI", "Tencent", "ByteDance", "Alibaba", "AntGroup",
     "Huawei", "Baidu", "SenseTime", "DeepSeek", "ZhipuAI", "MoonshotAI", "MiniMax", "StepFun",
-    "ZeroOneAI", "BAAI", "ShanghaiAILab", "PJLab", "CAS", "腾讯", "字节跳动", "阿里巴巴", "蚂蚁集团", "华为", "百度", "商汤",
+    "ZeroOneAI", "腾讯", "字节跳动", "阿里巴巴", "蚂蚁集团", "华为", "百度", "商汤",
     "深度求索", "智谱", "月之暗面", "稀宇科技", "阶跃星辰", "零一万物",
 }
 
@@ -68,6 +68,8 @@ ARXIV_API_ENDPOINTS = [
 
 REQUEST_TIMEOUT = (20, 120)
 REQUESTS_UA = "DailyPaper/1.0 (+contact: your_email@example.com)"
+# arXiv legacy API Terms of Use: one connection and no more than one request
+# every three seconds across all machines controlled by the client.
 REQUEST_CONCURRENCY_LIMIT = 1
 SESSION_RATE_LIMIT_PER_MIN = 18
 
@@ -79,6 +81,7 @@ RESPECT_ENV_PROXIES = True
 NO_PROXY_HOSTS = ["arxiv.org", "export.arxiv.org"]
 ARXIV_API_USE_PROXY = True
 
+# Keep a small safety margin above the official three-second minimum.
 RATE_LIMIT_MIN_INTERVAL_SEC = 3.1
 ARXIV_429_COOLDOWN_SEC = 7200
 ARXIV_429_COOLDOWN_MAX_SEC = 86400

@@ -138,7 +138,7 @@ class PrefetchTest(unittest.TestCase):
                 {"id": "http://arxiv.org/abs/1234.5678v1"}
             ], controller=controller)
 
-    def test_cache_pdfs_with_stats_skips_small_content_length_without_download(self):
+    def test_cache_pdfs_with_stats_downloads_small_content_for_later_classification(self):
         entry = {"id": "http://arxiv.org/abs/1234.5678v1"}
         response = _Response(content=b"x" * 20, headers={"Content-Length": "20"})
         response.iter_content = mock.Mock(side_effect=response.iter_content)
@@ -150,11 +150,12 @@ class PrefetchTest(unittest.TestCase):
              mock.patch.object(prefetch, "iter_pdf_urls", return_value=["https://example/1234.5678v1.pdf"]):
             cached, stats = prefetch.cache_pdfs_with_stats([entry], report_date="2026-03-31")
 
-        self.assertEqual(cached, {})
-        self.assertEqual(stats["skipped_small"], 1)
-        response.iter_content.assert_not_called()
+        self.assertIn("1234.5678v1", cached)
+        self.assertEqual(stats["skipped_small"], 0)
+        self.assertEqual(stats["small_pdf_downloaded"], 1)
+        response.iter_content.assert_called_once()
 
-    def test_cache_pdfs_with_stats_discards_small_download_without_length(self):
+    def test_cache_pdfs_with_stats_keeps_small_download_for_later_classification(self):
         entry = {"id": "http://arxiv.org/abs/1234.5678v1"}
 
         with tempfile.TemporaryDirectory() as tmpdir, \
@@ -164,11 +165,12 @@ class PrefetchTest(unittest.TestCase):
              mock.patch.object(prefetch, "iter_pdf_urls", return_value=["https://example/1234.5678v1.pdf"]):
             cached, stats = prefetch.cache_pdfs_with_stats([entry], report_date="2026-03-31")
 
-            self.assertEqual(cached, {})
-            self.assertEqual(stats["skipped_small"], 1)
-            self.assertFalse(any((Path(tmpdir) / "2026-03-31").glob("*.pdf")))
+            self.assertIn("1234.5678v1", cached)
+            self.assertEqual(stats["skipped_small"], 0)
+            self.assertEqual(stats["small_pdf_downloaded"], 1)
+            self.assertTrue(any((Path(tmpdir) / "2026-03-31").glob("*.pdf")))
 
-    def test_cache_pdfs_with_stats_removes_small_existing_cache(self):
+    def test_cache_pdfs_with_stats_keeps_small_existing_cache_until_classified(self):
         entry = {"id": "http://arxiv.org/abs/1234.5678v1"}
 
         with tempfile.TemporaryDirectory() as tmpdir, \
@@ -180,9 +182,29 @@ class PrefetchTest(unittest.TestCase):
             existing.write_bytes(b"tiny")
             cached, stats = prefetch.cache_pdfs_with_stats([entry], report_date="2026-03-31")
 
-            self.assertEqual(cached, {})
-            self.assertEqual(stats["skipped_small"], 1)
-            self.assertFalse(existing.exists())
+            self.assertEqual(cached["1234.5678v1"], str(existing))
+            self.assertEqual(stats["skipped_small"], 0)
+            self.assertEqual(stats["small_pdf_downloaded"], 1)
+            self.assertTrue(existing.exists())
+
+    def test_remove_small_university_pdfs_removes_only_university_pdf(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            university_pdf = Path(tmpdir) / "university.pdf"
+            company_pdf = Path(tmpdir) / "company.pdf"
+            university_pdf.write_bytes(b"tiny")
+            company_pdf.write_bytes(b"tiny")
+
+            cached, stats = prefetch.remove_small_university_pdfs(
+                {"u": str(university_pdf), "c": str(company_pdf)},
+                ["u"],
+                min_bytes=100,
+            )
+
+            self.assertNotIn("u", cached)
+            self.assertIn("c", cached)
+            self.assertFalse(university_pdf.exists())
+            self.assertTrue(company_pdf.exists())
+            self.assertEqual(stats["removed_small_university_pdfs"], 1)
 
 
 if __name__ == "__main__":
